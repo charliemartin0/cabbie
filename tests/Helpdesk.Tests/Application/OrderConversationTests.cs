@@ -2,11 +2,11 @@ using Helpdesk.Application.Sagas;
 using Helpdesk.Domain;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Hansom;
-using Hansom.Application.Bus;
-using Hansom.Application.Sagas;
-using Hansom.Application.Tracking;
-using Hansom.Domain.Sagas.ValueObjects;
+using Cabbie;
+using Cabbie.Application.Bus;
+using Cabbie.Application.Sagas;
+using Cabbie.Application.Tracking;
+using Cabbie.Domain.Sagas.ValueObjects;
 
 namespace Helpdesk.Tests.Application;
 
@@ -80,7 +80,7 @@ public sealed class OrderConversationTests
     private static async Task<IHost> StartedHostAsync()
     {
         var builder = Host.CreateApplicationBuilder();
-        builder.UseHansom(options =>
+        builder.UseCabbie(options =>
         {
             options.HandlerAssemblies.Add(typeof(PlaceOrder).Assembly);
             options.HandlerAssemblies.Add(typeof(OrderSaga).Assembly);

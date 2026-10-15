@@ -1,6 +1,6 @@
 using Helpdesk.Domain;
-using Hansom.Application.Cascades;
-using Hansom.Domain.Sagas;
+using Cabbie.Application.Cascades;
+using Cabbie.Domain.Sagas;
 
 namespace Helpdesk.Application.Sagas;
 
@@ -10,7 +10,7 @@ namespace Helpdesk.Application.Sagas;
 /// ScheduledCascade). The payment confirmation is an EXTERNAL event: when it arrives,
 /// Handle(PaymentCharged) completes the saga; when it never arrives, the OrderTimeout
 /// fires while the saga is still in progress and Handle(OrderTimeout) cancels it.
-/// All methods are instance — Hansom forbids static saga methods.
+/// All methods are instance — Cabbie forbids static saga methods.
 /// </summary>
 public sealed class OrderSaga : Saga
 {

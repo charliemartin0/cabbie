@@ -1,4 +1,4 @@
-using Hansom.Postgresql;
+using Cabbie.Postgresql;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -6,7 +6,7 @@ namespace Helpdesk.Tests.Postgres;
 
 /// <summary>
 /// Shared Postgres container for the Helpdesk conversation facts. Starts once per
-/// class, bootstraps every Hansom table via <c>PostgresSchema.EnsureAllAsync</c>, and
+/// class, bootstraps every Cabbie table via <c>PostgresSchema.EnsureAllAsync</c>, and
 /// exposes TRUNCATE helpers so each fact gets a fresh set of tables.
 /// </summary>
 public sealed class PostgresContainerFixture : IAsyncLifetime
@@ -55,28 +55,28 @@ public sealed class PostgresContainerFixture : IAsyncLifetime
     public async Task ResetOutboxAsync()
     {
         await using NpgsqlConnection conn = await DataSource.OpenConnectionAsync();
-        await using NpgsqlCommand cmd = new NpgsqlCommand("TRUNCATE TABLE hansom_outbox", conn);
+        await using NpgsqlCommand cmd = new NpgsqlCommand("TRUNCATE TABLE cabbie_outbox", conn);
         await cmd.ExecuteNonQueryAsync();
     }
 
     public async Task ResetInboxAsync()
     {
         await using NpgsqlConnection conn = await DataSource.OpenConnectionAsync();
-        await using NpgsqlCommand cmd = new NpgsqlCommand("TRUNCATE TABLE hansom_inbox", conn);
+        await using NpgsqlCommand cmd = new NpgsqlCommand("TRUNCATE TABLE cabbie_inbox", conn);
         await cmd.ExecuteNonQueryAsync();
     }
 
     public async Task ResetDeadLetterAsync()
     {
         await using NpgsqlConnection conn = await DataSource.OpenConnectionAsync();
-        await using NpgsqlCommand cmd = new NpgsqlCommand("TRUNCATE TABLE hansom_dead_letter", conn);
+        await using NpgsqlCommand cmd = new NpgsqlCommand("TRUNCATE TABLE cabbie_dead_letter", conn);
         await cmd.ExecuteNonQueryAsync();
     }
 
     public async Task ResetSagasAsync()
     {
         await using NpgsqlConnection conn = await DataSource.OpenConnectionAsync();
-        await using NpgsqlCommand cmd = new NpgsqlCommand("TRUNCATE TABLE hansom_sagas", conn);
+        await using NpgsqlCommand cmd = new NpgsqlCommand("TRUNCATE TABLE cabbie_sagas", conn);
         await cmd.ExecuteNonQueryAsync();
     }
 

@@ -17,7 +17,7 @@ public sealed record PaymentReference(string Value);
 
 /// <summary>
 /// Starts an order conversation. Saga correlation uses the Id property (the
-/// convention fallback — Helpdesk.Domain carries no Hansom attributes).
+/// convention fallback — Helpdesk.Domain carries no Cabbie attributes).
 /// DueAt is the deadline by which PaymentCharged must arrive; the OrderTimeout
 /// scheduled at DueAt cancels the saga when the payment never comes.
 /// </summary>

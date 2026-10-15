@@ -22,8 +22,8 @@
     <ProjectReference Include="..\..\samples\Helpdesk\src\Helpdesk.Host\Helpdesk.Host.csproj" />
     <ProjectReference Include="..\..\samples\Helpdesk\src\Helpdesk.Application\Helpdesk.Application.csproj" />
     <ProjectReference Include="..\..\samples\Helpdesk\src\Helpdesk.Infrastructure\Helpdesk.Infrastructure.csproj" />
-    <ProjectReference Include="..\..\src\Hansom\Hansom.csproj" />
-    <ProjectReference Include="..\..\src\Hansom.Postgresql\Hansom.Postgresql.csproj" />
+    <ProjectReference Include="..\..\src\Cabbie\Cabbie.csproj" />
+    <ProjectReference Include="..\..\src\Cabbie.Postgresql\Cabbie.Postgresql.csproj" />
   </ItemGroup>
 
   <ItemGroup>

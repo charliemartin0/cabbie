@@ -2,7 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Helpdesk.Application\Helpdesk.Application.csproj" />
-    <ProjectReference Include="..\..\..\..\src\Hansom.Postgresql\Hansom.Postgresql.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Cabbie.Postgresql\Cabbie.Postgresql.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

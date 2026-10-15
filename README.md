@@ -1,6 +1,6 @@
-# Hansom
+# Cabbie
 
-Hansom takes its name from the Victorian London cab — small, quiet, and built to slip through heavy traffic. It is a Wolverine-shaped in-process message bus for .NET. Most .NET apps that need messaging end up choosing between two extremes: a thin MediatR with no opinion about retries, scheduling, or persistence, and a full MassTransit / NServiceBus / Wolverine stack that ships every transport, codegen, and integration at once. Hansom is the middle path. It borrows Wolverine's handler shape — catalog, in-process `Invoke`/`Publish`, cascading messages, envelope-based execution — and stops at the kernel. Broker adapters are separate packages. The onion architecture is enforced. Every slice ships with prove-with tests.
+Cabbie is named for the driver of the hansom, the Victorian London cab — small, quiet, and built to slip through heavy traffic. It is a Wolverine-shaped in-process message bus for .NET. Most .NET apps that need messaging end up choosing between two extremes: a thin MediatR with no opinion about retries, scheduling, or persistence, and a full MassTransit / NServiceBus / Wolverine stack that ships every transport, codegen, and integration at once. Cabbie is the middle path. It borrows Wolverine's handler shape — catalog, in-process `Invoke`/`Publish`, cascading messages, envelope-based execution — and stops at the kernel. Broker adapters are separate packages. The onion architecture is enforced. Every slice ships with prove-with tests.
 
 ## Table of Contents
 
@@ -32,24 +32,24 @@ Hansom takes its name from the Victorian London cab — small, quiet, and built 
 ## Quickstart
 
 ```bash
-dotnet build src/Hansom
+dotnet build src/Cabbie
 dotnet test
 dotnet run --project samples/Helpdesk/src/Helpdesk.Host
 ```
 
-The Helpdesk sample runs against the in-memory kernel: instance saga, local queues, in-memory store. It is the smallest conversation Hansom can have. Everything in the roadmap is "more of the same, on real infrastructure."
+The Helpdesk sample runs against the in-memory kernel: instance saga, local queues, in-memory store. It is the smallest conversation Cabbie can have. Everything in the roadmap is "more of the same, on real infrastructure."
 
 ## Architecture
 
-Hansom is onion. The kernel does not know about brokers, databases, or HTTP. Adapters reference the kernel; the kernel never references adapters.
+Cabbie is onion. The kernel does not know about brokers, databases, or HTTP. Adapters reference the kernel; the kernel never references adapters.
 
 ```
 samples/Helpdesk ──┐
                    │
-src/Hansom.Postgresql  src/Hansom.RabbitMQ  src/Hansom.Http
+src/Cabbie.Postgresql  src/Cabbie.RabbitMQ  src/Cabbie.Http
                    │
                    ▼
-              src/Hansom
+              src/Cabbie
               ├── Domain         value objects, named recovery, envelope model
               ├── Application    ports, executor, mediator, discovery
               └── Infrastructure in-memory stores, hosting, local transport
@@ -57,32 +57,32 @@ src/Hansom.Postgresql  src/Hansom.RabbitMQ  src/Hansom.Http
 
 | Layer | Lives in | May know | Must not |
 | --- | --- | --- | --- |
-| Domain | `src/Hansom/Domain/` | nothing outer | I/O, handlers, reflection catalogs, adapter packages |
-| Application | `src/Hansom/Application/` | Domain | Npgsql, Rabbit, HTTP, EF |
-| Infrastructure | `src/Hansom/Infrastructure/` | Application ports | adapter package refs |
-| Adapters | `Hansom.{Postgresql, RabbitMQ, Http}` | Hansom core | leaking broker/DB types into core |
+| Domain | `src/Cabbie/Domain/` | nothing outer | I/O, handlers, reflection catalogs, adapter packages |
+| Application | `src/Cabbie/Application/` | Domain | Npgsql, Rabbit, HTTP, EF |
+| Infrastructure | `src/Cabbie/Infrastructure/` | Application ports | adapter package refs |
+| Adapters | `Cabbie.{Postgresql, RabbitMQ, Http}` | Cabbie core | leaking broker/DB types into core |
 
 ## Project Structure
 
 ```
-Hansom/
-  src/Hansom/
+Cabbie/
+  src/Cabbie/
     Domain/                      Envelope, wire names, saga identity, named errors — no I/O
     Application/                 Invoke, cascades, routing, execution, sagas — ports only
     Infrastructure/              host, JSON, local queues, transport/persistence ports
-  src/Hansom.Postgresql/         persistence adapter (shipped)
-  src/Hansom.RabbitMQ/           broker adapter (scaffold)
-  src/Hansom.Http/               HTTP front door (scaffold)
+  src/Cabbie.Postgresql/         persistence adapter (shipped)
+  src/Cabbie.RabbitMQ/           broker adapter (scaffold)
+  src/Cabbie.Http/               HTTP front door (scaffold)
   samples/Helpdesk/src/
-    Helpdesk.Domain/             entities / value objects — no Hansom, no infra
-    Helpdesk.Application/        messages + handlers — Domain + Hansom
-    Helpdesk.Infrastructure/     in-memory wiring — Application + Hansom
+    Helpdesk.Domain/             entities / value objects — no Cabbie, no infra
+    Helpdesk.Application/        messages + handlers — Domain + Cabbie
+    Helpdesk.Infrastructure/     in-memory wiring — Application + Cabbie
     Helpdesk.Host/               composition root
-  tests/Hansom.Tests/            xUnit facts, small fakes
+  tests/Cabbie.Tests/            xUnit facts, small fakes
   tests/Helpdesk.Tests/          sample facts
 ```
 
-`src/Hansom` does not `ProjectReference` the adapter projects. Npgsql stays in `Hansom.Postgresql`; Rabbit in `Hansom.RabbitMQ`; HTTP in `Hansom.Http`. The dependency direction is enforced by project rules, not by convention.
+`src/Cabbie` does not `ProjectReference` the adapter projects. Npgsql stays in `Cabbie.Postgresql`; Rabbit in `Cabbie.RabbitMQ`; HTTP in `Cabbie.Http`. The dependency direction is enforced by project rules, not by convention.
 
 ## Roadmap
 
@@ -99,13 +99,13 @@ The kernel ships. The broker adapters are the next milestones. Each is a slice: 
 
 ## Inspiration
 
-Hansom borrows the *shape* of [Wolverine](https://github.com/JasperFx/wolverine) by Jeremy Miller — handler catalog, envelope model, in-process `Invoke`/`Publish`, cascading messages. It does not clone Wolverine's catalog. There is no source generation, no Marten / EF integration, no in-core broker transports. The kernel stops at "Wolverine-shaped in-process" and refuses to grow beyond what the test suite proves.
+Cabbie borrows the *shape* of [Wolverine](https://github.com/JasperFx/wolverine) by Jeremy Miller — handler catalog, envelope model, in-process `Invoke`/`Publish`, cascading messages. It does not clone Wolverine's catalog. There is no source generation, no Marten / EF integration, no in-core broker transports. The kernel stops at "Wolverine-shaped in-process" and refuses to grow beyond what the test suite proves.
 
 ## Contributing
 
-One slice at a time. No stacked PRs. Every slice ships with prove-with tests. `src/Hansom` does not `ProjectReference` any adapter. Branch from `origin/main`, PR to `main`. The slice is the unit of progress, not the commit.
+One slice at a time. No stacked PRs. Every slice ships with prove-with tests. `src/Cabbie` does not `ProjectReference` any adapter. Branch from `origin/main`, PR to `main`. The slice is the unit of progress, not the commit.
 
-See `learning.md` for a guided tour through event-driven architecture using Hansom as the working example. See `AGENTS.md` and `.cursor/rules/` for the full set of project rules.
+See `learning.md` for a guided tour through event-driven architecture using Cabbie as the working example. See `AGENTS.md` and `.cursor/rules/` for the full set of project rules.
 
 ## Author
 

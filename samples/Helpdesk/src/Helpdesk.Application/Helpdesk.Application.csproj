@@ -2,7 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Helpdesk.Domain\Helpdesk.Domain.csproj" />
-    <ProjectReference Include="..\..\..\..\src\Hansom\Hansom.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Cabbie\Cabbie.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
