@@ -68,7 +68,11 @@ public sealed class HandlerCatalog
                     continue;
                 }
 
-                discovered.Add(handler with { CachedInvoker = HandlerInvokerCompiler.Compile(handler) });
+                discovered.Add(handler with
+                {
+                    CachedInvoker = HandlerInvokerCompiler.Compile(handler),
+                    Timeout = HandlerTimeoutAttribute.For(method, handlerType)
+                });
             }
 
             if (IsSagaHandlerType(handlerType))

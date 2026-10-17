@@ -10,6 +10,7 @@ public sealed class OnExceptionExpression
     private readonly ErrorPolicyCatalog _catalog;
     private readonly Type _exceptionType;
     private readonly Type? _messageType;
+    private readonly bool _unmatched;
 
     public OnExceptionExpression(ErrorPolicyCatalog catalog, Type exceptionType, Type? messageType = null)
     {
@@ -20,11 +21,30 @@ public sealed class OnExceptionExpression
         _messageType = messageType;
     }
 
+    internal OnExceptionExpression(ErrorPolicyCatalog catalog)
+    {
+        _catalog = catalog;
+        _exceptionType = typeof(Exception);
+        _unmatched = true;
+    }
+
     public OnExceptionExpression Then => this;
+
+    private void Add(ErrorAction action)
+    {
+        if (_unmatched)
+        {
+            _catalog.RegisterDefault(action);
+        }
+        else
+        {
+            _catalog.Register(_exceptionType, _messageType, action);
+        }
+    }
 
     public OnExceptionExpression Retry()
     {
-        _catalog.Register(_exceptionType, _messageType, new Retry());
+        Add(new Retry());
         return this;
     }
 
@@ -33,7 +53,7 @@ public sealed class OnExceptionExpression
         ArgumentNullException.ThrowIfNull(delays);
         foreach (TimeSpan delay in delays)
         {
-            _catalog.Register(_exceptionType, _messageType, new RetryWithCooldown(delay));
+            Add(new RetryWithCooldown(delay));
         }
 
         return this;
@@ -41,13 +61,13 @@ public sealed class OnExceptionExpression
 
     public OnExceptionExpression MoveToErrorQueue()
     {
-        _catalog.Register(_exceptionType, _messageType, new MoveToErrorQueue());
+        Add(new MoveToErrorQueue());
         return this;
     }
 
     public OnExceptionExpression Requeue()
     {
-        _catalog.Register(_exceptionType, _messageType, new Requeue());
+        Add(new Requeue());
         return this;
     }
 
@@ -66,7 +86,7 @@ public sealed class OnExceptionExpression
                 throw new ArgumentOutOfRangeException(nameof(delays), delay, "ScheduleRetry delay must be greater than zero.");
             }
 
-            _catalog.Register(_exceptionType, _messageType, new ScheduleRetry(delay));
+            Add(new ScheduleRetry(delay));
         }
 
         return this;
@@ -74,7 +94,7 @@ public sealed class OnExceptionExpression
 
     public OnExceptionExpression Discard()
     {
-        _catalog.Register(_exceptionType, _messageType, new Discard());
+        Add(new Discard());
         return this;
     }
 }

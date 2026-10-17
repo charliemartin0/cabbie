@@ -120,11 +120,9 @@ public sealed class PostgresHostBuilderTests : IClassFixture<PostgresContainerFi
 
             await Assert.ThrowsAsync<HandlerFault>(() => bus.InvokeAsync(new AlwaysFailsCommand()));
 
-            // IErrorQueue.Move is a void fire-and-forget port (DeadLetterQueueAdapter), so the
-            // Postgres write lands on a later tick — poll briefly instead of asserting immediately.
-            DeadLetter dead = await EventuallyAsync(
-                () => store.ListAsync().AsTask(),
-                list => list.Count == 1);
+            // IErrorQueue.MoveAsync is awaited by the executor, so the row is already written
+            // by the time InvokeAsync throws.
+            DeadLetter dead = Assert.Single(await store.ListAsync());
 
             // Message.Value is stored as JSON and does not round-trip to the CLR type (the port
             // contract only guarantees the envelope id and the cause survive); assert the stable
@@ -166,26 +164,6 @@ public sealed class PostgresHostBuilderTests : IClassFixture<PostgresContainerFi
 
         await PostgresSchema.EnsureAllAsync(dataSource);
         await PostgresSchema.EnsureAllAsync(dataSource);
-    }
-
-    private static async Task<DeadLetter> EventuallyAsync(
-        Func<Task<IReadOnlyList<DeadLetter>>> probe,
-        Func<IReadOnlyList<DeadLetter>, bool> ready)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(2);
-        do
-        {
-            IReadOnlyList<DeadLetter> current = await probe();
-            if (ready(current))
-            {
-                return current[0];
-            }
-
-            await Task.Delay(25);
-        }
-        while (DateTime.UtcNow < deadline);
-
-        throw new TimeoutException("Dead-letter write did not land within 2s.");
     }
 
     private static async Task DropTableAsync(NpgsqlDataSource dataSource, string table)

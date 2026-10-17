@@ -5,10 +5,8 @@ using Cabbie.Domain.Envelope;
 namespace Cabbie.Infrastructure.Persistence;
 
 /// <summary>
-/// Wires the in-memory execution port to the persistence port: <see cref="IErrorQueue.Move"/>
-/// records the envelope and its cause in the <see cref="IDeadLetterStore"/>. The in-memory
-/// store's RecordAsync completes synchronously, so the fire-and-forget write lands before
-/// the caller's next statement; a durable store adapter must revisit the void signature.
+/// Wires the execution port to the persistence port: <see cref="IErrorQueue.MoveAsync"/>
+/// records the envelope and its cause in the <see cref="IDeadLetterStore"/>.
 /// </summary>
 internal sealed class DeadLetterQueueAdapter : IErrorQueue
 {
@@ -20,10 +18,10 @@ internal sealed class DeadLetterQueueAdapter : IErrorQueue
         _store = store;
     }
 
-    public void Move(Envelope envelope, Exception cause)
+    public ValueTask MoveAsync(Envelope envelope, Exception cause, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(envelope);
         ArgumentNullException.ThrowIfNull(cause);
-        _ = _store.RecordAsync(envelope, cause);
+        return _store.RecordAsync(envelope, cause, cancellationToken);
     }
 }

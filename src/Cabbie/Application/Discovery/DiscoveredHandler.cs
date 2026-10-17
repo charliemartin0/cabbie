@@ -21,4 +21,10 @@ public sealed record DiscoveredHandler(
     /// back to reflection for those.
     /// </summary>
     internal HandlerInvoker? CachedInvoker { get; init; }
+
+    /// <summary>
+    /// Per-attempt timeout from <see cref="HandlerTimeoutAttribute"/> (method, else type), cached at
+    /// Scan time. Null falls back to the host-wide <c>CabbieOptions.HandlerTimeout</c>.
+    /// </summary>
+    internal TimeSpan? Timeout { get; init; }
 }

@@ -7,6 +7,8 @@ using Cabbie.Domain.Messaging;
 using Cabbie.Domain.Messaging.ValueObjects;
 using Cabbie.Tests.Domain;
 using Cabbie.Tests.Domain.Envelope;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Cabbie.Tests.Application.Execution;
 
@@ -19,6 +21,7 @@ public sealed class ExecutorErrorPolicyTests
     public ExecutorErrorPolicyTests()
     {
         TimeoutThrowingHandler.SeenAttempts.Clear();
+        CancelledOnFirstAttemptHandler.SeenAttempts.Clear();
     }
 
     [Fact]
@@ -56,6 +59,135 @@ public sealed class ExecutorErrorPolicyTests
         Assert.Equal([1], TimeoutThrowingHandler.SeenAttempts);
     }
 
+    [Fact]
+    public async Task unconfigured_invoke_async_fails_once_and_is_not_dead_lettered()
+    {
+        var errorQueue = new RecordingErrorQueue();
+        var executor = new Executor(new ErrorPolicyCatalog(), errorQueue: errorQueue);
+
+        HandlerFault fault = await Assert.ThrowsAsync<HandlerFault>(
+            () => executor.InvokeAsync(ChargePaymentEnvelope(), HandlerFor<TimeoutThrowingHandler>()));
+
+        Assert.IsType<TimeoutException>(fault.InnerException);
+        Assert.Equal([1], TimeoutThrowingHandler.SeenAttempts);
+        Assert.Empty(errorQueue.Moved);
+    }
+
+    [Fact]
+    public async Task explicit_rule_still_applies_to_invoke_async()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<TimeoutException>().Retry().Retry();
+        var executor = new Executor(policies);
+
+        await Assert.ThrowsAsync<HandlerFault>(
+            () => executor.InvokeAsync(ChargePaymentEnvelope(), HandlerFor<TimeoutThrowingHandler>()));
+
+        Assert.Equal([1, 2, 3], TimeoutThrowingHandler.SeenAttempts);
+    }
+
+    [Fact]
+    public async Task configured_unmatched_policy_retries_then_dead_letters_a_queue_delivery()
+    {
+        Envelope envelope = ChargePaymentEnvelope();
+        var policies = new ErrorPolicyCatalog();
+        policies.OnUnmatchedException().Retry().Then.MoveToErrorQueue();
+        var errorQueue = new RecordingErrorQueue();
+        var executor = new Executor(policies, errorQueue: errorQueue);
+
+        HandlerFault fault = await Assert.ThrowsAsync<HandlerFault>(
+            () => executor.InvokeAsync(envelope, QueueHandlerFor<TimeoutThrowingHandler>()));
+
+        Assert.IsType<TimeoutException>(fault.InnerException);
+        Assert.Equal([1, 2], TimeoutThrowingHandler.SeenAttempts);
+        Envelope moved = Assert.Single(errorQueue.Moved);
+        Assert.Equal(envelope.Id, moved.Id);
+    }
+
+    [Fact]
+    public async Task built_in_default_retries_a_queue_delivery_three_times_then_dead_letters()
+    {
+        Envelope envelope = ChargePaymentEnvelope();
+        var errorQueue = new RecordingErrorQueue();
+        var executor = new Executor(
+            new ErrorPolicyCatalog(),
+            errorQueue: errorQueue,
+            timeProvider: new ManualTimeProvider(autoFire: true));
+
+        HandlerFault fault = await Assert.ThrowsAsync<HandlerFault>(
+            () => executor.InvokeAsync(envelope, QueueHandlerFor<TimeoutThrowingHandler>()));
+
+        Assert.IsType<TimeoutException>(fault.InnerException);
+        Assert.Equal([1, 2, 3, 4], TimeoutThrowingHandler.SeenAttempts);
+        Envelope moved = Assert.Single(errorQueue.Moved);
+        Assert.Equal(envelope.Id, moved.Id);
+        Assert.Equal(4, moved.Attempts.Value);
+    }
+
+    [Fact]
+    public async Task default_retry_delays_option_sets_the_number_of_retries_before_dead_letter()
+    {
+        var errorQueue = new RecordingErrorQueue();
+        var builder = Host.CreateApplicationBuilder();
+        builder.Services.AddSingleton<TimeProvider>(new ManualTimeProvider(autoFire: true));
+        builder.UseCabbie(options => options.DefaultRetryDelays = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)]);
+        builder.Services.AddSingleton<IErrorQueue>(errorQueue);
+        using IHost host = builder.Build();
+        Executor executor = host.Services.GetRequiredService<Executor>();
+
+        await Assert.ThrowsAsync<HandlerFault>(
+            () => executor.InvokeAsync(ChargePaymentEnvelope(), QueueHandlerFor<TimeoutThrowingHandler>()));
+
+        Assert.Equal([1, 2, 3], TimeoutThrowingHandler.SeenAttempts);
+        Assert.Single(errorQueue.Moved);
+    }
+
+    [Fact]
+    public async Task empty_default_retry_delays_dead_letters_a_queue_delivery_on_the_first_failure()
+    {
+        var errorQueue = new RecordingErrorQueue();
+        var builder = Host.CreateApplicationBuilder();
+        builder.UseCabbie(options => options.DefaultRetryDelays = []);
+        builder.Services.AddSingleton<IErrorQueue>(errorQueue);
+        using IHost host = builder.Build();
+        Executor executor = host.Services.GetRequiredService<Executor>();
+
+        await Assert.ThrowsAsync<HandlerFault>(
+            () => executor.InvokeAsync(ChargePaymentEnvelope(), QueueHandlerFor<TimeoutThrowingHandler>()));
+
+        Assert.Equal([1], TimeoutThrowingHandler.SeenAttempts);
+        Assert.Single(errorQueue.Moved);
+    }
+
+    [Fact]
+    public async Task cancellation_not_requested_by_the_caller_is_retried_per_policy()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<TaskCanceledException>().Retry();
+        var executor = new Executor(policies);
+
+        await executor.InvokeAsync(ChargePaymentEnvelope(), HandlerFor<CancelledOnFirstAttemptHandler>());
+
+        Assert.Equal([1, 2], CancelledOnFirstAttemptHandler.SeenAttempts);
+    }
+
+    [Fact]
+    public async Task cancellation_requested_by_the_caller_is_not_retried()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<TaskCanceledException>().Retry();
+        var executor = new Executor(policies);
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => executor.InvokeAsync(ChargePaymentEnvelope(), HandlerFor<CancelledOnFirstAttemptHandler>(), cts.Token));
+
+        Assert.Empty(CancelledOnFirstAttemptHandler.SeenAttempts);
+    }
+
+    private static DiscoveredHandler QueueHandlerFor<THandler>() => HandlerFor<THandler>() with { Scheduled = true };
+
     private static DiscoveredHandler HandlerFor<THandler>()
     {
         var catalog = new HandlerCatalog();
@@ -88,5 +220,20 @@ public sealed class TimeoutThrowingHandler
     {
         SeenAttempts.Add(envelope.Attempts.Value);
         throw new TimeoutException("always");
+    }
+}
+
+public sealed class CancelledOnFirstAttemptHandler
+{
+    public static List<int> SeenAttempts { get; } = [];
+
+    public void Handle(ChargePayment message, Envelope envelope)
+    {
+        SeenAttempts.Add(envelope.Attempts.Value);
+        if (envelope.Attempts.Value == 1)
+        {
+            // What an HTTP client timeout looks like: cancelled, but not by the caller.
+            throw new TaskCanceledException("client timed out");
+        }
     }
 }

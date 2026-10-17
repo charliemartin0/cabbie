@@ -83,7 +83,9 @@ public sealed class MessageSchedulerTests
         var hold = new InMemoryScheduledEnvelopeHold();
         var catalog = new HandlerCatalog();
         catalog.Scan(typeof(FailingThenPendingTimeoutHandler));
-        var executor = new Executor(new ErrorPolicyCatalog(), scheduled: hold);
+        var policies = new ErrorPolicyCatalog();
+        policies.OnUnmatchedException();
+        var executor = new Executor(policies, scheduled: hold);
         var scheduler = new MessageScheduler(new MessageDelivery(catalog, executor, hold), hold);
         DateTimeOffset due = DateTimeOffset.UtcNow.AddMinutes(-1);
         hold.Park(TimeoutEnvelope(due, orderId: 1));

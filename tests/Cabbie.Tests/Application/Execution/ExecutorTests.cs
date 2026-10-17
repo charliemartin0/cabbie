@@ -60,7 +60,9 @@ public sealed class ExecutorTests
     {
         Envelope envelope = ChargePaymentEnvelope();
         var errorQueue = new RecordingErrorQueue();
-        var executor = new Executor(new ErrorPolicyCatalog(), errorQueue: errorQueue);
+        var policies = new ErrorPolicyCatalog();
+        policies.OnUnmatchedException();
+        var executor = new Executor(policies, errorQueue: errorQueue);
 
         HandlerFault fault = await Assert.ThrowsAsync<HandlerFault>(
             () => executor.InvokeAsync(envelope, HandlerFor<AlwaysTimeoutChargePaymentHandler>()));
@@ -255,9 +257,10 @@ public sealed class RecordingErrorQueue : IErrorQueue
 {
     public List<Envelope> Moved { get; } = [];
 
-    public void Move(Envelope envelope, Exception cause)
+    public ValueTask MoveAsync(Envelope envelope, Exception cause, CancellationToken cancellationToken = default)
     {
         Moved.Add(envelope);
+        return ValueTask.CompletedTask;
     }
 }
 
