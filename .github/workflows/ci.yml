@@ -1,0 +1,107 @@
+name: CI
+
+# Runs on every PR, whatever its base: Graphite stack PRs target their parent branch, not main.
+# Build (analyzers, warnings as errors), all tests (Postgres suites use Testcontainers on the
+# runner's Docker), dotnet format on changed .cs files only, actionlint, and a conventional PR title.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_NOLOGO: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  build-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          cache: true
+          cache-dependency-path: '**/*.csproj'
+
+      - name: Restore
+        run: |
+          dotnet restore Cabbie.slnx
+          dotnet restore tests/Cabbie.Tests.Postgresql
+
+      - name: Build (warnings are errors)
+        run: |
+          dotnet build Cabbie.slnx --no-restore
+          dotnet build tests/Cabbie.Tests.Postgresql --no-restore
+
+      - name: Test
+        run: dotnet test Cabbie.slnx --no-build
+
+      - name: Test (Postgres adapter, Testcontainers)
+        run: dotnet test tests/Cabbie.Tests.Postgresql --no-build
+
+  format:
+    name: dotnet format (changed files)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: dotnet format --verify-no-changes (changed .cs files)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git diff --name-only --diff-filter=AM "$BASE_SHA"...HEAD -- '*.cs')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No changed .cs files."
+            exit 0
+          fi
+          dotnet restore Cabbie.slnx
+          dotnet format Cabbie.slnx --verify-no-changes --no-restore --severity warn --include "${files[@]}" ||
+            { echo "::error::Style violations. Fix with: dotnet format Cabbie.slnx --no-restore --severity warn --include <files>"; exit 1; }
+
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: actionlint
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
+
+  pr-title:
+    name: Conventional PR title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if ! grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9-]+\))?!?: [a-z0-9`]' <<< "$TITLE"; then
+            echo "::error::PR title must be a conventional commit with a lowercase description, e.g. 'feat: add scoped handler resolution'. Got: $TITLE"
+            exit 1
+          fi
