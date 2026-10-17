@@ -86,16 +86,32 @@ Cabbie/
 
 ## Roadmap
 
-The kernel ships. The broker adapters are the next milestones. Each is a slice: prove-with test first, then the smallest type that makes it pass.
+Goal: replace AsyncMonolith in StoreboostServices with Cabbie on AWS SQS/SNS. Done: Hansom → Cabbie rename.
 
-1. **RabbitMQ adapter** — broker transport + durable subscriptions.
-2. **HTTP adapter** — request/response across processes against the same execution pipeline.
-3. **First-party logging middleware** — structured logs around handler invocation.
-4. **Validator middleware** — pluggable handler-input validation.
-5. **Outbox middleware** — kernel-level transactional outbox over the persistence ports.
-6. **Polymorphic serialization** — discriminator-aware JSON for heterogeneous payloads.
-7. **Observability polish** — OTel exporters, in-flight gauges, latency histograms beyond the static `ActivitySource`/`Meter`.
-8. **1.0** — once the kernel is documented, one broker adapter is shipped, and the project reads clean to a newcomer.
+1. **Handler DI** — constructor injection with a scope per message (fresh scope per retry); discover `Consume` inherited from generic base classes.
+2. **Error policy fixes** — base-type exception matching, a default retry/poison policy, a per-handler timeout, an awaited dead-letter write. Can run in parallel with 1.
+3. **Transport selection** — route by URI scheme (`sqs://`, `sns://`) through a transport registry; unknown schemes fail loudly; a listener port the host starts and stops.
+4. **Transport contract suite** — one shared test suite every transport must pass (round trip, duplicates, redelivery, dead-letter), proven first against a serialising loopback transport.
+5. **Handler isolation + inbox** — one failing handler no longer skips the others; redelivery re-runs only the failed handler; the inbox gives per-(envelope, handler) idempotency.
+6. **`Cabbie.Aws`** — SQS send/receive, then SNS fan-out and topology. Tested against LocalStack (Testcontainers).
+7. **Durable scheduler**, then an **EF-transactional outbox + relay**, then **packaging, versioning and CI** so Storeboost can consume Cabbie, then the **Storeboost cutover** behind an `IProducerService`/`IScheduleService`-shaped facade.
+
+3 → 4 → 5 run in that order (they share `MessageDelivery` and host registration). 6 builds on 3–5.
+
+### Later / maybe
+
+- RabbitMQ adapter (broker transport + durable subscriptions).
+- HTTP adapter (request/response across processes).
+- First-party logging and validator middleware.
+- Polymorphic serialization (discriminator-aware JSON).
+- Observability polish (OTel exporters, in-flight gauges, latency histograms).
+
+### Open decisions
+
+- **Build vs adopt:** keep building Cabbie, or adopt Wolverine (which ships SQS/SNS, outbox and scheduling) for the Storeboost replacement.
+- **Delays:** a Postgres-backed scheduler or EventBridge Scheduler (SQS caps delays at 15 minutes; SNS has none).
+- **Outbox:** an EF-joined `Cabbie.EntityFrameworkCore`, or sharing the Npgsql connection and transaction with EF.
+- **"Wolverine-shaped":** a design constraint, or only inspiration.
 
 ## Inspiration
 
