@@ -264,7 +264,7 @@ If Cabbie ever needs the cold-start win, the catalog can be cached to disk and r
 <details>
 <summary>How is the slice history kept honest?</summary>
 
-The codemap (`codemap.md`, regenerable) records every landed slice with one line of context. Twenty-six slices have landed so far. The slice is the unit of progress, not the commit. Each slice ships with prove-with tests first; the production types follow.
+The codemap (`codemap.md`, regenerable) records every landed slice with one line of context. Twenty-six slices have landed so far. The slice is the unit of progress, not the commit. Each slice ships with behaviour tests that cover its prove-with list, written alongside or after the code.
 
 Per project rules: branch from `origin/main`, PR to `main`, never a stacked PR. The codemap is updated in the slice commit, not in a follow-up.
 
@@ -276,8 +276,8 @@ Per project rules: branch from `origin/main`, PR to `main`, never a stacked PR. 
 <summary>How do I add a feature to Cabbie?</summary>
 
 1. Open (or write) the `*Plan` for the feature folder. Update **Put here** / **Do not put here** / **Prove with** if the spec has changed.
-2. Write the prove-with test first. A failing xUnit fact in `tests/Cabbie.Tests/<Folder>/`, snake_case name that describes behaviour, small fakes.
-3. Implement the smallest type that makes the test pass. Onion rules: Domain does not import Application; Application does not import Infrastructure; `src/Cabbie` does not ProjectReference any adapter.
+2. Implement the smallest type that does the job. Onion rules: Domain does not import Application; Application does not import Infrastructure; `src/Cabbie` does not ProjectReference any adapter.
+3. Add xUnit facts in `tests/Cabbie.Tests/<Folder>/` that cover the prove-with behaviours, alongside or after the code: snake_case names that describe behaviour, small fakes, assertions on outcomes rather than internals.
 4. Update the codemap with the new slice.
 5. Branch from `origin/main`, PR to `main`. No stacked PRs.
 
