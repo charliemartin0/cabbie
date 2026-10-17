@@ -11,7 +11,7 @@ Guidance for coding agents (omp, Cursor, Claude Code, OpenCode) and humans worki
 ## Workflow
 
 1. **Plan top-down.** Start from the README roadmap item. Write a short plan that names the slice, its **Prove with** behaviours, and the 1–N PRs it splits into, in dependency order. Keep each PR to one intent.
-2. **Build with Graphite.** One branch per intent: `gt create -m "type: lowercase description" type/brief-name`. Stack only when a PR depends on the one below; otherwise branch off `main`. Submit with `gt submit --stack --draft`. Never merge; humans merge.
+2. **Build with Graphite.** One branch per intent: `gt create -m "type: lowercase description" type/brief-name`. Stack only when a PR depends on the one below; otherwise branch off `main`. Submit with `gt submit --stack --draft`. If Graphite isn't available (gt not initialised, or `gt submit` can't access the repo), fall back straight away: push each branch and open it with `gh pr create --draft --base <parent>`, bottom-up, keeping one intent per PR. Never merge; humans merge.
 3. **Test behaviour.** Every slice ships with tests that pin behaviour, not implementation. Write them alongside or after the code. See `testing.mdc`.
 4. **Check before handing off** (all must pass):
 
