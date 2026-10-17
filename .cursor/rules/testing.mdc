@@ -1,0 +1,36 @@
+---
+description: Behaviour tests are required for every slice; no test-first ritual
+alwaysApply: true
+---
+
+# Testing
+
+Every slice ships with tests. Write them alongside or after the code, whichever is faster; there is no test-first ritual. What matters is that the tests pin behaviour, not implementation.
+
+Implement against the `*Plan` comments: **Put here**, **Do not put here**, **Prove with**. The **Prove with** list is the set of behaviours the tests must cover before the slice is done.
+
+```csharp
+// ❌ BAD — pins implementation details; breaks on any refactor
+[Fact]
+public void executor_calls_next_attempt_three_times() { ... }
+
+// ✅ GOOD — names the observable behaviour
+[Fact]
+public async Task same_envelope_comes_back_with_attempts_1_2_3_then_succeeds() { ... }
+
+[Fact]
+public async Task exhausted_retries_move_the_envelope_to_the_error_queue_and_throw_handler_fault() { ... }
+```
+
+## Tests
+
+- Mirror production folders: `tests/Cabbie.Tests/Application/Execution/ExecutorTests.cs`.
+- Fact names are snake_case behaviour sentences, not `Test1` or `InvokeAsync_Works`.
+- Cover success, exhaustion/failure, and the Plan's negative cases (throwing handler publishes nothing; missing policy does not retry).
+- Assert on observable outcomes (messages published, envelopes dead-lettered, state stored), not on private calls or call counts.
+- Use small fakes (`RecordingErrorQueue`), not a container or a live broker, for kernel tests.
+- `dotnet test` must pass before a slice is "done". Do not delete, skip or weaken a test to get green.
+
+## Scope
+
+One README slice at a time. Do not start Scheduling while proving Middleware. Do not add first-party logging/validation/outbox middleware until Persistence exists. Completeness of a small kernel beats a half-clone.
