@@ -9,6 +9,7 @@ using Cabbie.Application.Tracking;
 using Cabbie.Domain.Envelope;
 using Cabbie.Domain.Envelope.ValueObjects;
 using Cabbie.Domain.Errors.ValueObjects;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Cabbie.Application.Execution;
 
@@ -26,6 +27,14 @@ public sealed class Executor
     private readonly IScheduledEnvelopeHold? _scheduled;
     private readonly IHandlerAttemptObserver? _attempts;
     private readonly Func<IPublishEnqueuer>? _enqueuer;
+    private readonly IServiceScopeFactory _scopes;
+
+    /// <summary>
+    /// Used when no container is supplied: an empty provider, so handlers are built by
+    /// ActivatorUtilities and only Envelope / CancellationToken slots resolve.
+    /// </summary>
+    private static readonly IServiceScopeFactory EmptyScopes =
+        new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
 
     public Executor(
         ErrorPolicyCatalog policies,
@@ -34,7 +43,8 @@ public sealed class Executor
         MiddlewareCatalog? middleware = null,
         IScheduledEnvelopeHold? scheduled = null,
         IHandlerAttemptObserver? attempts = null,
-        Func<IPublishEnqueuer>? enqueuer = null)
+        Func<IPublishEnqueuer>? enqueuer = null,
+        IServiceScopeFactory? scopes = null)
     {
         ArgumentNullException.ThrowIfNull(policies);
         _policies = policies;
@@ -44,6 +54,7 @@ public sealed class Executor
         _scheduled = scheduled;
         _attempts = attempts;
         _enqueuer = enqueuer;
+        _scopes = scopes ?? EmptyScopes;
     }
 
     public Task<object?> InvokeAsync(
@@ -63,13 +74,16 @@ public sealed class Executor
         InvocationKind kind,
         CancellationToken cancellationToken)
     {
+        // One scope per handler invocation: spans outer middleware and every retry attempt,
+        // and is disposed on success, fault and cancellation alike.
+        await using AsyncServiceScope scope = _scopes.CreateAsyncScope();
         try
         {
             return await _middleware.InvokeAsync(
                 MiddlewareLayer.Outer,
                 envelope,
                 handler,
-                () => InvokeWithRetries(envelope, handler, cancellationToken, kind),
+                () => InvokeWithRetries(envelope, handler, scope.ServiceProvider, cancellationToken, kind),
                 cancellationToken);
         }
         catch (Exception exception) when (
@@ -87,6 +101,7 @@ public sealed class Executor
     private async Task<object?> InvokeWithRetries(
         Envelope envelope,
         DiscoveredHandler handler,
+        IServiceProvider services,
         CancellationToken cancellationToken,
         InvocationKind kind)
     {
@@ -100,7 +115,7 @@ public sealed class Executor
                     MiddlewareLayer.Inner,
                     current,
                     handler,
-                    () => InvokeOnce(current, handler, cancellationToken),
+                    () => InvokeOnce(current, handler, services, cancellationToken),
                     cancellationToken);
                 _attempts?.OnAttempt(current, handler, exception: null);
                 return result;
@@ -218,11 +233,13 @@ public sealed class Executor
     private static async Task<object?> InvokeOnce(
         Envelope envelope,
         DiscoveredHandler handler,
+        IServiceProvider services,
         CancellationToken cancellationToken)
     {
+        object? target = handler.IsStatic ? null : HandlerServices.CreateTarget(services, handler);
         object? result = handler.CachedInvoker is { } invoker
-            ? invoker(ResolveTarget(handler), envelope.Message.Value, envelope, cancellationToken)
-            : InvokeByReflection(handler, envelope, cancellationToken);
+            ? invoker(target, envelope.Message.Value, envelope, cancellationToken, services)
+            : InvokeByReflection(handler, target, envelope, services, cancellationToken);
 
         if (result is Task task)
         {
@@ -241,26 +258,20 @@ public sealed class Executor
         return result;
     }
 
-    private static object? ResolveTarget(DiscoveredHandler handler) =>
-        handler.IsStatic ? null : handler.ResolveTarget?.Invoke();
-
     /// <summary>
     /// Fallback for handlers built at runtime without a compiled invoker (the saga
     /// NotFound miss path). Not the hot path.
     /// </summary>
     private static object? InvokeByReflection(
         DiscoveredHandler handler,
+        object? target,
         Envelope envelope,
+        IServiceProvider services,
         CancellationToken cancellationToken)
     {
-        object? target = handler.IsStatic
-            ? null
-            : handler.ResolveTarget is { } resolve
-                ? resolve()
-                : Activator.CreateInstance(handler.HandlerType);
         try
         {
-            return handler.Method.Invoke(target, BindArguments(envelope, handler, cancellationToken));
+            return handler.Method.Invoke(target, BindArguments(envelope, handler, services, cancellationToken));
         }
         catch (TargetInvocationException ex) when (ex.InnerException is not null)
         {
@@ -272,21 +283,17 @@ public sealed class Executor
     private static object?[] BindArguments(
         Envelope envelope,
         DiscoveredHandler handler,
+        IServiceProvider services,
         CancellationToken cancellationToken)
     {
         object?[] arguments = new object?[1 + handler.InjectionSlots.Count];
         arguments[0] = envelope.Message.Value;
         for (int i = 0; i < handler.InjectionSlots.Count; i++)
         {
-            Type parameterType = handler.InjectionSlots[i].ParameterType;
-            if (parameterType == typeof(Envelope))
-            {
-                arguments[i + 1] = envelope;
-            }
-            else if (parameterType == typeof(CancellationToken))
-            {
-                arguments[i + 1] = cancellationToken;
-            }
+            ParameterInfo slot = handler.InjectionSlots[i];
+            arguments[i + 1] = slot.ParameterType == typeof(Envelope) ? envelope
+                : slot.ParameterType == typeof(CancellationToken) ? cancellationToken
+                : HandlerServices.Resolve(services, slot);
         }
 
         return arguments;

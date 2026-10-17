@@ -6,6 +6,7 @@ Cabbie is named for the driver of the hansom, the Victorian London cab — small
 
 - [Features](#features)
 - [Quickstart](#quickstart)
+- [Dependency injection](#dependency-injection)
 - [Architecture](#architecture)
 - [Project Structure](#project-structure)
 - [Roadmap](#roadmap)
@@ -24,7 +25,7 @@ Cabbie is named for the driver of the hansom, the Victorian London cab — small
 - **In-memory inbox, outbox, dead-letter, and saga stores** — ports defined in Application, in-memory implementation in Infrastructure. The PostgreSQL adapter fills the durable version.
 - **JSON serialization** — `ISerializer` port + `System.Text.Json` implementation, content-type aware.
 - **Observability hooks** — `ActivitySource`, `Meter`, per-attempt observers. No exporter baked in.
-- **Handler discovery by convention** — `HandlerConvention` walks opted-in assemblies. No source generation.
+- **Handler discovery by convention** — `HandlerConvention` walks opted-in assemblies. No source generation. Handlers may take constructor dependencies; extra method parameters after the message resolve from a per-message DI scope.
 - **Cached invoker** — one delegate dispatch per call. No reflection on the hot path.
 - **Onion architecture enforced by project rules** — the kernel never sees Npgsql, Rabbit, or HTTP.
 - **Prove-with tests for every slice** — xUnit, snake_case behaviour sentences, small fakes.
@@ -38,6 +39,33 @@ dotnet run --project samples/Helpdesk/src/Helpdesk.Host
 ```
 
 The Helpdesk sample runs against the in-memory kernel: instance saga, local queues, in-memory store. It is the smallest conversation Cabbie can have. Everything in the roadmap is "more of the same, on real infrastructure."
+
+## Dependency injection
+
+```csharp
+builder.Services.AddScoped<IReceiptSender, LoggingReceiptSender>();
+builder.UseCabbie(options => options.HandlerAssemblies.Add(typeof(PlaceOrder).Assembly));
+// or, without a host builder: services.AddCabbie(options => ...)
+```
+
+Handlers take constructor dependencies, and extra method parameters after the message resolve from the container:
+
+```csharp
+public sealed class SendOrderReceiptHandler(IReceiptSender sender)
+{
+    public void Handle(SendOrderReceipt message, ILogger<SendOrderReceiptHandler> logger, CancellationToken ct)
+    {
+        sender.Send(message.Id);
+        logger.LogInformation("Receipt sent for {OrderId}", message.Id);
+    }
+}
+```
+
+- One `AsyncServiceScope` per handler invocation. It is disposed on success, failure, or cancellation, and shared by every retry attempt of that invocation. Fan-out handlers each get their own scope.
+- `AddCabbie` scans `HandlerAssemblies` and registers instance handlers as scoped. Handlers that were never registered (scanned later, or built by tests) are created with `ActivatorUtilities`.
+- `Envelope` and `CancellationToken` parameters are filled by Cabbie; `out`, `ref`, and `params` parameters are rejected when Cabbie is added.
+- Sagas: saga state is not constructed by the container. Use method parameters for services.
+- A missing service surfaces as `HandlerFault` wrapping `HandlerDependencyMissing`, which names the handler and the service type.
 
 ## Architecture
 

@@ -5,7 +5,8 @@ namespace Cabbie.Application.Discovery;
 
 /// <summary>
 /// Whether a method is a handler by convention. Handle / HandleAsync / Consume / ConsumeAsync / Start / StartAsync.
-/// First parameter is the message; extra parameters are injection slots, restricted to Envelope and CancellationToken.
+/// First parameter is the message; extra parameters are injection slots: Envelope, CancellationToken,
+/// or a service resolved from the per-message DI scope.
 /// </summary>
 public static class HandlerConvention
 {
@@ -68,19 +69,12 @@ public static class HandlerConvention
     }
 
     /// <summary>
-    /// Only Envelope and CancellationToken can be injected; anything else (and any out/ref/params
-    /// of those) would be null-filled at invocation. Reject at Scan so the user sees the reason
+    /// Any parameter type is an injection slot (Envelope, CancellationToken, or a scoped service);
+    /// out/ref/params cannot be filled by the container. Reject at Scan so the user sees the reason
     /// before a real handler ever runs.
     /// </summary>
     private static void EnsureSupportedSlot(Type handlerType, string methodName, ParameterInfo slot)
     {
-        bool isSupportedType = slot.ParameterType == typeof(Envelope)
-            || slot.ParameterType == typeof(CancellationToken);
-        if (!isSupportedType)
-        {
-            throw new InvalidHandlerSignature(handlerType, methodName, slot);
-        }
-
         if (slot.ParameterType.IsByRef || slot.IsDefined(typeof(ParamArrayAttribute), inherit: false))
         {
             throw new InvalidHandlerSignature(

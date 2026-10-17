@@ -39,6 +39,12 @@ public sealed record PaymentCharged(OrderId Id, PaymentReference PaymentRef, Dat
 public sealed record OrderTimeout(OrderId Id);
 
 /// <summary>
+/// Asks for an order receipt to be sent. Handled by a handler with a constructor
+/// dependency, to show handlers resolving services from the per-message DI scope.
+/// </summary>
+public sealed record SendOrderReceipt(OrderId Id);
+
+/// <summary>
 /// Order lifecycle. Distinguishes a saga completed by the payment confirmation from
 /// one cancelled by the OrderTimeout so the sample can prove which path ran.
 /// </summary>

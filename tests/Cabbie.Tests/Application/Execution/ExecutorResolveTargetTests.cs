@@ -34,7 +34,7 @@ public sealed class ExecutorResolveTargetTests
             envelope,
             handler with
             {
-                ResolveTarget = () =>
+                ResolveTarget = _ =>
                 {
                     calls++;
                     return new ResolveTargetFlakyHandler();

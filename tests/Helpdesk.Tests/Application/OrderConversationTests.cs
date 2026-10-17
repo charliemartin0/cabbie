@@ -1,3 +1,4 @@
+using Helpdesk.Application.Receipts;
 using Helpdesk.Application.Sagas;
 using Helpdesk.Domain;
 using Microsoft.Extensions.DependencyInjection;
@@ -77,6 +78,21 @@ public sealed class OrderConversationTests
         Assert.Equal(OrderStatus.CompletedByTimeout, saga.Status);
     }
 
+    [Fact]
+    public async Task send_order_receipt_resolves_sender_from_di()
+    {
+        var sender = new RecordingReceiptSender();
+        var builder = Host.CreateApplicationBuilder();
+        builder.Services.AddSingleton<IReceiptSender>(sender);
+        builder.UseCabbie(options => options.HandlerAssemblies.Add(typeof(SendOrderReceiptHandler).Assembly));
+        using IHost host = builder.Build();
+        await host.StartAsync();
+
+        await host.Services.GetRequiredService<IMessageBus>().InvokeAsync(new SendOrderReceipt(new OrderId(1)));
+
+        Assert.Equal([new OrderId(1)], sender.Sent);
+    }
+
     private static async Task<IHost> StartedHostAsync()
     {
         var builder = Host.CreateApplicationBuilder();
@@ -97,4 +113,11 @@ public sealed class OrderConversationTests
             42.5m,
             DateTimeOffset.UtcNow,
             dueAt ?? DateTimeOffset.UtcNow.AddMinutes(5));
+}
+
+public sealed class RecordingReceiptSender : IReceiptSender
+{
+    public List<OrderId> Sent { get; } = [];
+
+    public void Send(OrderId id) => Sent.Add(id);
 }

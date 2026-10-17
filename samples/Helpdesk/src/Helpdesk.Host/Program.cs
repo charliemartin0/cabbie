@@ -1,10 +1,13 @@
 using Helpdesk.Application.Sagas;
 using Helpdesk.Domain;
 using Helpdesk.Infrastructure;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Cabbie;
+using Cabbie.Application.Bus;
 
 var builder = Host.CreateApplicationBuilder(args);
+builder.Services.AddHelpdesk();
 builder.UseCabbie(options =>
 {
     options.HandlerAssemblies.Add(typeof(PlaceOrder).Assembly);
@@ -19,4 +22,5 @@ if (!string.IsNullOrWhiteSpace(connectionString))
 
 var host = builder.Build();
 await host.StartAsync();
+await host.Services.GetRequiredService<IMessageBus>().InvokeAsync(new SendOrderReceipt(new OrderId(1)));
 await host.StopAsync();
