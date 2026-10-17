@@ -1,0 +1,29 @@
+---
+description: Graphite stacks, one intent per draft PR, conventional commits, never merge
+alwaysApply: true
+---
+
+# Graphite workflow
+
+Cabbie uses the same PR workflow as StoreboostServices: small Graphite stacks of draft PRs, one intent each.
+
+## Rules
+
+1. **One intent per branch and PR.** A rename, an analyzer bump, a feature slice and a doc rewrite are four PRs.
+2. **Stack only on a real dependency.** If the work does not need the branch below, start from `main` (`gt sync && gt checkout main`).
+3. **Conventional commits, lowercase description.** `gt create -m "feat: add scoped handler resolution" feat/scoped-handler-resolution`. Always pass the branch name explicitly, as `type/brief-name-with-hyphens`.
+4. **Draft PRs only.** Submit with `gt submit --stack --draft`. Humans mark ready and merge.
+5. **Update with gt, not raw git.** `gt modify -a` to amend (restacks everything above), `gt restack` after `main` moves, `gt move --onto <parent>` to change a parent. No `git push --force` by hand.
+6. **Done means on `main`.** A slice is done only when its commits are ancestors of `origin/main`. Delete its `*Plan` then, not before.
+
+## Commands
+
+| Intent | Command |
+| --- | --- |
+| Sync and clean merged branches | `gt sync` |
+| New branch on the current one | `gt create -a -m "type: desc" type/brief-name` |
+| New branch off a shared parent | `gt create --onto <parent> -m "type: desc" type/brief-name` |
+| Amend and restack | `gt modify -a` |
+| Change parent | `gt move --onto <new-parent>` |
+| Submit as drafts | `gt submit --stack --draft` |
+| View the stack | `gt log short` |
