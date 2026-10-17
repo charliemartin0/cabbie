@@ -50,7 +50,7 @@ public sealed class OrderSaga : Saga
     public void Handle(PaymentCharged message, ILogger<OrderSaga> logger)
     {
         Status = OrderStatus.CompletedByPayment;
-        logger.LogInformation("Order {OrderId} completed by payment {PaymentRef}", message.Id, message.PaymentRef);
+        OrderSagaLog.Completed(logger, message.Id, message.PaymentRef);
         MarkCompleted();
     }
 
@@ -59,4 +59,10 @@ public sealed class OrderSaga : Saga
         Status = OrderStatus.CompletedByTimeout;
         MarkCompleted();
     }
+}
+
+internal static partial class OrderSagaLog
+{
+    [LoggerMessage(Level = LogLevel.Information, Message = "Order {OrderId} completed by payment {PaymentRef}")]
+    public static partial void Completed(ILogger logger, OrderId orderId, PaymentReference paymentRef);
 }

@@ -15,6 +15,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Helpdesk.Tests/Helpdesk.Tests.csproj" />
     <Project Path="tests/Cabbie.Tests.Handlers/Cabbie.Tests.Handlers.csproj" />
+    <Project Path="tests/Cabbie.Tests.FactoryHandlers/Cabbie.Tests.FactoryHandlers.csproj" />
     <Project Path="tests/Cabbie.Tests.InvalidCatalog/Cabbie.Tests.InvalidCatalog.csproj" />
     <Project Path="tests/Cabbie.Tests.InvalidHandlers/Cabbie.Tests.InvalidHandlers.csproj" />
     <Project Path="tests/Cabbie.Tests/Cabbie.Tests.csproj" />

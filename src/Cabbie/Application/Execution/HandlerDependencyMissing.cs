@@ -12,9 +12,11 @@ public sealed class HandlerDependencyMissing : InvalidOperationException
     public Type HandlerType { get; }
 
     /// <summary>
-    /// The unregistered service type of the offending constructor or method parameter.
+    /// The unregistered service type of the offending constructor or method parameter. Null when
+    /// the gap is further down the handler's dependency chain; <see cref="Exception.InnerException"/>
+    /// then carries the container's description of it.
     /// </summary>
-    public Type ServiceType { get; }
+    public Type? ServiceType { get; }
 
     /// <param name="parameter">A constructor or handler method parameter.</param>
     /// <param name="handlerType">
@@ -26,6 +28,23 @@ public sealed class HandlerDependencyMissing : InvalidOperationException
     {
         HandlerType = handlerType ?? parameter.Member.DeclaringType!;
         ServiceType = parameter.ParameterType;
+    }
+
+    /// <summary>
+    /// A service the handler needs indirectly (a dependency of one of its constructor parameters)
+    /// is not registered.
+    /// </summary>
+    public HandlerDependencyMissing(Type handlerType, Exception inner)
+        : base(Describe(handlerType, inner), inner)
+    {
+        HandlerType = handlerType;
+    }
+
+    private static string Describe(Type handlerType, Exception inner)
+    {
+        ArgumentNullException.ThrowIfNull(handlerType);
+        ArgumentNullException.ThrowIfNull(inner);
+        return $"Handler '{handlerType.FullName}' could not be built, a service in its dependency chain is not registered in the container: {inner.Message}";
     }
 
     private static string Describe(ParameterInfo parameter, Type? handlerType)

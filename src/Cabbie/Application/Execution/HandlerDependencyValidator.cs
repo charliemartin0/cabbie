@@ -16,14 +16,15 @@ public static class HandlerDependencyValidator
     /// <param name="catalog">The scanned handlers.</param>
     /// <param name="isService">The container's registration probe.</param>
     /// <param name="registeredByCabbie">
-    /// Handler types AddCabbie registered by type. Their constructors are checked, and so are the
-    /// constructors of handlers with no registration at all (built by ActivatorUtilities). A handler
-    /// the application registered itself (often through a factory) is not second-guessed.
+    /// True for a handler type whose container registration is the one AddCabbie added. Those
+    /// constructors are checked, and so are the constructors of handlers with no registration at
+    /// all (built by ActivatorUtilities). A handler the application registered itself (often
+    /// through a factory) is not second-guessed.
     /// </param>
     public static void Validate(
         HandlerCatalog catalog,
         IServiceProviderIsService isService,
-        IReadOnlySet<Type> registeredByCabbie)
+        Func<Type, bool> registeredByCabbie)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(isService);
@@ -44,7 +45,7 @@ public static class HandlerDependencyValidator
             bool builtFromContainer = !handler.IsStatic
                 && handler.ResolveTarget is null
                 && !handler.HandlerType.IsAssignableTo(typeof(Saga))
-                && (registeredByCabbie.Contains(handler.HandlerType) || !isService.IsService(handler.HandlerType));
+                && (registeredByCabbie(handler.HandlerType) || !isService.IsService(handler.HandlerType));
             if (builtFromContainer
                 && HandlerServices.FindUnresolvable(isService, handler.HandlerType) is { } parameter)
             {

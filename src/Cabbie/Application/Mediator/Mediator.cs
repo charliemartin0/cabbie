@@ -319,7 +319,7 @@ public sealed class Mediator : IMessageBus
             object? started = null;
             object? result = await _executor.InvokeAsync(
                 sagaEnvelope,
-                handler with { ResolveTarget = services => started = ActivatorUtilities.CreateInstance(services, sagaType) },
+                handler with { ResolveTarget = _ => started = Activator.CreateInstance(sagaType) },
                 cancellationToken);
             return ((Saga)started!, result);
         }
@@ -352,7 +352,7 @@ public sealed class Mediator : IMessageBus
 
         return await _executor.InvokeAsync(
             envelope,
-            notFound with { ResolveTarget = services => ActivatorUtilities.CreateInstance(services, handler.HandlerType) },
+            notFound with { ResolveTarget = _ => Activator.CreateInstance(handler.HandlerType) },
             cancellationToken);
     }
 

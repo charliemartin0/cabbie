@@ -22,10 +22,10 @@ internal static class HandlerServices
 
     /// <summary>
     /// ResolveTarget wins (saga paths). Otherwise the container, then a cached factory for
-    /// handlers that were never registered. A constructor failure is reported as
-    /// <see cref="HandlerDependencyMissing"/> only when the container says a constructor
-    /// parameter cannot be resolved; any other exception, including one thrown by the
-    /// constructor itself, propagates unchanged.
+    /// handlers that were never registered. The container's "Unable to resolve service"
+    /// failure, whether the gap is in the handler's own constructor or further down its
+    /// dependency chain, is reported as <see cref="HandlerDependencyMissing"/>; any other
+    /// exception, including one thrown by a constructor itself, propagates unchanged.
     /// </summary>
     public static object CreateTarget(IServiceProvider services, DiscoveredHandler handler)
     {
@@ -42,11 +42,17 @@ internal static class HandlerServices
                     services,
                     null);
         }
-        catch (InvalidOperationException ex) when (FindUnresolvable(services, handlerType) is not null)
+        catch (InvalidOperationException ex) when (IsUnresolvedService(ex))
         {
-            throw new HandlerDependencyMissing(FindUnresolvable(services, handlerType)!, handlerType, ex);
+            throw FindUnresolvable(services, handlerType) is { } parameter
+                ? new HandlerDependencyMissing(parameter, handlerType, ex)
+                : new HandlerDependencyMissing(handlerType, ex);
         }
     }
+
+    // Microsoft.Extensions.DependencyInjection has no dedicated exception type for this failure.
+    private static bool IsUnresolvedService(InvalidOperationException ex) =>
+        ex.Message.StartsWith("Unable to resolve service for type", StringComparison.Ordinal);
 
     /// <summary>
     /// The first constructor parameter of <paramref name="type"/> the container cannot supply, or
