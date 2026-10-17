@@ -202,9 +202,11 @@ public sealed class ExecutorMiddlewareTests
         var catalog = new HandlerCatalog();
         catalog.Scan(typeof(ThrowingFirstFanOutHandler));
         catalog.Scan(typeof(SecondFanOutHandler));
+        var policies = new ErrorPolicyCatalog();
+        policies.OnUnmatchedException();
         IMessageBus bus = new Cabbie.Application.Mediator.Mediator(
             catalog,
-            executor: new Executor(new ErrorPolicyCatalog(), middleware: middleware));
+            executor: new Executor(policies, middleware: middleware));
 
         await Assert.ThrowsAsync<HandlerFault>(() => bus.InvokeAsync(new ChargePayment(1)));
 

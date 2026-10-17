@@ -1,5 +1,6 @@
 using System.Reflection;
 using Cabbie.Application.Discovery;
+using Cabbie.Application.Execution;
 
 namespace Cabbie.Application.Sagas;
 
@@ -29,7 +30,10 @@ public static class NotFoundConvention
             sagaType,
             messageType,
             IsStatic: false,
-            parameters[1..]);
+            parameters[1..])
+        {
+            Timeout = HandlerTimeoutAttribute.For(method, sagaType),
+        };
     }
 
     private static MethodInfo? Find(Type sagaType, string name, Type messageType) =>

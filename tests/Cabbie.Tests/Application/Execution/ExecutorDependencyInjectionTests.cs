@@ -77,7 +77,9 @@ public sealed class ExecutorDependencyInjectionTests
             services.AddSingleton(sink);
             services.AddScoped<DisposableProbe>();
         });
-        Executor executor = ExecutorFor(provider);
+        var policies = new ErrorPolicyCatalog();
+        policies.OnUnmatchedException();
+        Executor executor = ExecutorFor(provider, policies);
 
         await Assert.ThrowsAsync<HandlerFault>(() =>
             executor.InvokeAsync(MakeEnvelope(new ProbeMessage(Throws: true)), Scan<ProbeHandler>()));
@@ -182,7 +184,9 @@ public sealed class ExecutorDependencyInjectionTests
     {
         var sink = new DiSink();
         await using ServiceProvider provider = Build(services => services.AddSingleton(sink));
-        Executor executor = ExecutorFor(provider);
+        var policies = new ErrorPolicyCatalog();
+        policies.OnUnmatchedException();
+        Executor executor = ExecutorFor(provider, policies);
 
         HandlerFault fault = await Assert.ThrowsAsync<HandlerFault>(() =>
             executor.InvokeAsync(MakeEnvelope(new ThrowingCtorMessage()), Scan<ThrowingCtorHandler>()));
@@ -205,6 +209,48 @@ public sealed class ExecutorDependencyInjectionTests
 
         Assert.IsType<HandlerDependencyMissing>(fault.InnerException);
         Assert.Equal(1, attempts.Attempts);
+    }
+
+    [Fact]
+    public async Task handler_dependency_missing_is_not_retried_even_by_a_catch_all_policy()
+    {
+        await using ServiceProvider provider = Build(_ => { });
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<Exception>().Retry().Retry().Then.MoveToErrorQueue();
+        var errorQueue = new RecordingErrorQueue();
+        var attempts = new CountingAttemptObserver();
+        var executor = new Executor(
+            policies,
+            errorQueue: errorQueue,
+            attempts: attempts,
+            scopes: provider.GetRequiredService<IServiceScopeFactory>());
+
+        HandlerFault fault = await Assert.ThrowsAsync<HandlerFault>(() =>
+            executor.InvokeAsync(MakeEnvelope(new NeedsCtorServiceMessage()), Scan<NeedsCtorServiceHandler>()));
+
+        Assert.IsType<HandlerDependencyMissing>(fault.InnerException);
+        Assert.Equal(1, attempts.Attempts);
+        Assert.Empty(errorQueue.Moved);
+    }
+
+    [Fact]
+    public async Task handler_dependency_missing_is_not_retried_or_dead_lettered_by_the_built_in_default()
+    {
+        await using ServiceProvider provider = Build(_ => { });
+        var errorQueue = new RecordingErrorQueue();
+        var attempts = new CountingAttemptObserver();
+        var executor = new Executor(
+            new ErrorPolicyCatalog(),
+            errorQueue: errorQueue,
+            attempts: attempts,
+            scopes: provider.GetRequiredService<IServiceScopeFactory>());
+
+        HandlerFault fault = await Assert.ThrowsAsync<HandlerFault>(() =>
+            executor.InvokeAsync(MakeEnvelope(new NeedsCtorServiceMessage()), Scan<NeedsCtorServiceHandler>()));
+
+        Assert.IsType<HandlerDependencyMissing>(fault.InnerException);
+        Assert.Equal(1, attempts.Attempts);
+        Assert.Empty(errorQueue.Moved);
     }
 
     [Fact]

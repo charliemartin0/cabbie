@@ -116,7 +116,9 @@ public sealed class TrackedSessionTests
         catalog.Scan(typeof(StartBoomAndSiblingHandler));
         catalog.Scan(typeof(BoomHandler));
         catalog.Scan(typeof(SiblingHandler));
-        IMessageBus bus = new Cabbie.Application.Mediator.Mediator(catalog);
+        var policies = new ErrorPolicyCatalog();
+        policies.OnUnmatchedException();
+        IMessageBus bus = new Cabbie.Application.Mediator.Mediator(catalog, policies: policies);
 
         HandlerFault fault = await Assert.ThrowsAsync<HandlerFault>(
             () => bus.InvokeTrackedAsync(new PlaceOrder(1)));

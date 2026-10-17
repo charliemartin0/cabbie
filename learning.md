@@ -148,7 +148,7 @@ The same `Envelope` comes back with `Attempts` 1, 2, 3; then error-queue if the 
 <details>
 <summary>What is a dead-letter?</summary>
 
-A dead-letter is the final resting place for a message whose handler has failed permanently. The executor publishes to `IErrorQueue` on exhausted retries. The error queue writes to `IDeadLetterStore` (an inbox/outbox port), so the row can be inspected, replayed, or discarded.
+A dead-letter is the final resting place for a message whose handler has failed permanently. The executor awaits `IErrorQueue.MoveAsync` on exhausted retries. The error queue writes to `IDeadLetterStore` (an inbox/outbox port), so the row can be inspected, replayed, or discarded. If that write fails, the executor logs it and throws `HandlerFault` wrapping `DeadLetterWriteFailed`; the dead-letter is never dropped silently.
 
 In-memory today (`Infrastructure/Persistence/DeadLetterQueueAdapter.cs`); durable in the PostgreSQL adapter. Ports in `src/Cabbie/Application/Persistence/`.
 

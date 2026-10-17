@@ -7,6 +7,7 @@ Cabbie is named for the driver of the hansom, the Victorian London cab — small
 - [Features](#features)
 - [Quickstart](#quickstart)
 - [Dependency injection](#dependency-injection)
+- [Error policies](#error-policies)
 - [Architecture](#architecture)
 - [Project Structure](#project-structure)
 - [Roadmap](#roadmap)
@@ -68,6 +69,23 @@ public sealed class SendOrderReceiptHandler(IReceiptSender sender)
 - Sagas: saga state is created and loaded by Cabbie, never resolved from the container. A saga needs a public parameterless constructor (checked at scan); take services as handler method parameters.
 - A missing service found at runtime, directly or further down the dependency chain, surfaces as `HandlerFault` wrapping `HandlerDependencyMissing`. It is not retried and the message is not dead-lettered: no attempt can succeed until the registration is fixed, so retrying only delays the error and a dead-letter entry would record a configuration mistake as a poisoned message. Any other constructor exception propagates unchanged and follows the normal error policy.
 
+## Error policies
+
+```csharp
+builder.UseCabbie(options =>
+{
+    options.OnException<IOException>().RetryWithCooldown(TimeSpan.FromMilliseconds(200)).Then.MoveToErrorQueue();
+    options.OnUnmatchedException().Retry().Then.MoveToErrorQueue();
+    options.HandlerTimeout = TimeSpan.FromSeconds(30);
+});
+```
+
+- Matching: the closest exception type in the thrown exception's inheritance chain wins, so `OnException<IOException>()` also handles `FileNotFoundException`, and a rule for `FileNotFoundException` beats one for `IOException`. At the same distance, a rule scoped to the message type beats the global rule; that form, `OnException<TException, TMessage>()`, is on `ErrorPolicyCatalog`, not on `CabbieOptions`. Distance wins over scope: a global rule for a closer type beats a message-scoped rule for a base type (a global `FileNotFoundException` rule beats an `IOException` rule scoped to `ChargePayment`). The chosen chain runs in registration order, one action per attempt: attempt 1 takes the first action, attempt 2 the second, and a failure past the end of the chain is a `HandlerFault`.
+- `HandlerDependencyMissing` is never retried or dead-lettered, whatever rule or default would match it (see [Dependency injection](#dependency-injection)).
+- Default policy: applies to queue deliveries only. `InvokeAsync` never retries or dead-letters an exception that has no explicit rule: it fails once, immediately, with `HandlerFault`; an explicit `OnException` rule still applies to it. On a queue delivery, an exception no rule matches gets one retry per entry of `options.DefaultRetryDelays` (default 100ms, 500ms, 2s), then the dead-letter; set `DefaultRetryDelays = []` to dead-letter on the first failure. `OnUnmatchedException()` replaces that chain: the first call discards the built-in default and starts an empty chain, and every later call appends to it in call order (`DefaultRetryDelays` is then ignored). A first call with no actions means fail fast: an unmatched exception becomes a `HandlerFault` on the first attempt. Without an `IErrorQueue` (a bare `Executor`), `MoveToErrorQueue` throws `HandlerFault`.
+- Timeouts: `options.HandlerTimeout` sets a per-attempt timeout for every handler; `[HandlerTimeout(milliseconds)]` on a handler class or method overrides it (method, then class, then global). There is no per-handler opt-out of the global value. Each attempt gets its own clock, covering the handler and Inner middleware but not Outer middleware or the cooldowns between attempts. The timeout is cooperative: the handler's `CancellationToken` is cancelled, so a handler without a `CancellationToken` parameter cannot observe it, and a handler that ignores the token and returns still succeeds. An attempt that was cancelled by the timeout fails with `HandlerTimedOut`, which derives from `TimeoutException`, so `OnException<TimeoutException>()` matches it and `OnException<HandlerTimedOut>()` matches it more specifically. Only cancellation of the caller's token is a cancellation: it propagates as `OperationCanceledException` and no policy runs. Any other `OperationCanceledException` (an HTTP client timeout, say) is an ordinary fault and goes through the policy. Retry cooldowns and timeouts run on the container's `TimeProvider` (`TimeProvider.System` unless you register one).
+- Dead-letter: the write is awaited before `HandlerFault` is thrown. If the write itself fails, Cabbie logs an error (event id 1) and throws `HandlerFault` wrapping `DeadLetterWriteFailed`: its `InnerException` is the write error and its `OriginalFault` property is the original handler exception. This includes cancellation exceptions the store raises on its own (an SDK timeout, say); only a write interrupted because the caller's token was cancelled propagates as `OperationCanceledException`.
+
 ## Architecture
 
 Cabbie is onion. The kernel does not know about brokers, databases, or HTTP. Adapters reference the kernel; the kernel never references adapters.
@@ -118,7 +136,7 @@ Cabbie/
 Goal: replace AsyncMonolith in StoreboostServices with Cabbie on AWS SQS/SNS. Done: Hansom → Cabbie rename.
 
 1. **Handler DI** — constructor injection with a scope per message (fresh scope per retry); discover `Consume` inherited from generic base classes.
-2. **Error policy fixes** — base-type exception matching, a default retry/poison policy, a per-handler timeout, an awaited dead-letter write. Can run in parallel with 1.
+2. **Error policy fixes** — Done: base-type exception matching, a default retry/dead-letter policy, handler timeouts, an awaited dead-letter write. See [Error policies](#error-policies).
 3. **Transport selection** — route by URI scheme (`sqs://`, `sns://`) through a transport registry; unknown schemes fail loudly; a listener port the host starts and stops.
 4. **Transport contract suite** — one shared test suite every transport must pass (round trip, duplicates, redelivery, dead-letter), proven first against a serialising loopback transport.
 5. **Handler isolation + inbox** — one failing handler no longer skips the others; redelivery re-runs only the failed handler; the inbox gives per-(envelope, handler) idempotency.

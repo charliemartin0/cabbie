@@ -31,14 +31,21 @@ public sealed class ErrorPolicyCatalogTests
     }
 
     [Fact]
-    public void unconfigured_exception_is_a_missing_policy_not_a_throw()
+    public void unconfigured_exception_is_the_built_in_default_policy_not_a_throw()
     {
         var policies = new ErrorPolicyCatalog();
 
         ErrorPolicyLookup lookup = policies.For(typeof(InvalidOperationException));
 
-        var missing = Assert.IsType<MissingErrorPolicy>(lookup);
-        Assert.Equal(typeof(InvalidOperationException), missing.ExceptionType);
+        var found = Assert.IsType<FoundErrorPolicy>(lookup);
+        Assert.Equal(
+            [
+                new RetryWithCooldown(TimeSpan.FromMilliseconds(100)),
+                new RetryWithCooldown(TimeSpan.FromMilliseconds(500)),
+                new RetryWithCooldown(TimeSpan.FromSeconds(2)),
+                new MoveToErrorQueue()
+            ],
+            found.Actions);
     }
 
     [Fact]
@@ -66,6 +73,7 @@ public sealed class ErrorPolicyCatalogTests
     public void for_exception_type_alone_does_not_use_a_message_specific_rule()
     {
         var policies = new ErrorPolicyCatalog();
+        policies.OnUnmatchedException();
         policies.OnException<TimeoutException, ChargePayment>().Retry();
 
         Assert.IsType<MissingErrorPolicy>(policies.For(typeof(TimeoutException)));
@@ -148,5 +156,124 @@ public sealed class ErrorPolicyCatalogTests
 
         var found = Assert.IsType<FoundErrorPolicy>(policies.For(typeof(TimeoutException)));
         Assert.Equal([new RetryWithCooldown(TimeSpan.FromTicks(-1))], found.Actions);
+    }
+
+    [Fact]
+    public void io_exception_policy_matches_file_not_found_exception()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<IOException>().Retry();
+
+        var found = Assert.IsType<FoundErrorPolicy>(policies.For(typeof(FileNotFoundException)));
+        Assert.Equal([new Retry()], found.Actions);
+    }
+
+    [Fact]
+    public void closest_base_type_policy_wins_over_more_general_one()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<Exception>().Discard();
+        policies.OnException<IOException>().Retry();
+
+        var found = Assert.IsType<FoundErrorPolicy>(policies.For(typeof(FileNotFoundException)));
+        Assert.Equal([new Retry()], found.Actions);
+    }
+
+    [Fact]
+    public void message_scoped_rule_beats_global_rule_at_same_distance()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<IOException>().Discard();
+        policies.OnException<IOException, ChargePayment>().Retry();
+
+        var scoped = Assert.IsType<FoundErrorPolicy>(
+            policies.For(typeof(FileNotFoundException), typeof(ChargePayment)));
+        Assert.Equal([new Retry()], scoped.Actions);
+
+        var other = Assert.IsType<FoundErrorPolicy>(
+            policies.For(typeof(FileNotFoundException), typeof(PlaceOrder)));
+        Assert.Equal([new Discard()], other.Actions);
+    }
+
+    [Fact]
+    public void closer_global_rule_beats_message_scoped_rule_on_a_base_type()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<FileNotFoundException>().Discard();
+        policies.OnException<IOException, ChargePayment>().Retry();
+
+        var found = Assert.IsType<FoundErrorPolicy>(
+            policies.For(typeof(FileNotFoundException), typeof(ChargePayment)));
+        Assert.Equal([new Discard()], found.Actions);
+    }
+
+    [Fact]
+    public void on_unmatched_exception_replaces_the_default()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnUnmatchedException().Retry().Then.Discard();
+
+        var found = Assert.IsType<FoundErrorPolicy>(policies.For(typeof(InvalidOperationException)));
+        Assert.Equal([new Retry(), new Discard()], found.Actions);
+    }
+
+    [Fact]
+    public void empty_unmatched_policy_is_missing()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnUnmatchedException();
+
+        var missing = Assert.IsType<MissingErrorPolicy>(policies.For(typeof(InvalidOperationException)));
+        Assert.Equal(typeof(InvalidOperationException), missing.ExceptionType);
+    }
+
+    [Fact]
+    public void repeated_on_unmatched_exception_calls_append_to_one_chain()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnUnmatchedException().Retry();
+        policies.OnUnmatchedException().Discard();
+
+        var found = Assert.IsType<FoundErrorPolicy>(policies.For(typeof(InvalidOperationException)));
+        Assert.Equal([new Retry(), new Discard()], found.Actions);
+    }
+
+    [Fact]
+    public void default_can_be_withheld_so_invoke_style_lookups_fail_fast()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<IOException>().Retry();
+
+        Assert.IsType<MissingErrorPolicy>(policies.For(typeof(InvalidOperationException), useDefault: false));
+        Assert.IsType<FoundErrorPolicy>(policies.For(typeof(FileNotFoundException), useDefault: false));
+    }
+
+    [Fact]
+    public void default_retry_delays_become_one_retry_each_then_dead_letter()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.UseDefaultRetryDelays([TimeSpan.FromSeconds(3)]);
+
+        var found = Assert.IsType<FoundErrorPolicy>(policies.For(typeof(InvalidOperationException)));
+        Assert.Equal([new RetryWithCooldown(TimeSpan.FromSeconds(3)), new MoveToErrorQueue()], found.Actions);
+    }
+
+    [Fact]
+    public void default_retry_delays_do_not_override_an_unmatched_policy()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnUnmatchedException().Discard();
+        policies.UseDefaultRetryDelays([TimeSpan.FromSeconds(3)]);
+
+        var found = Assert.IsType<FoundErrorPolicy>(policies.For(typeof(InvalidOperationException)));
+        Assert.Equal([new Discard()], found.Actions);
+    }
+
+    [Fact]
+    public void negative_default_retry_delay_is_rejected()
+    {
+        var policies = new ErrorPolicyCatalog();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => policies.UseDefaultRetryDelays([TimeSpan.FromSeconds(-1)]));
     }
 }

@@ -9,7 +9,8 @@ public interface IErrorQueue
 {
     /// <summary>
     /// Move an exhausted envelope to the dead-letter destination, carrying the
-    /// exception that exhausted the retries as the cause.
+    /// exception that exhausted the retries as the cause. The executor awaits the write;
+    /// a failure surfaces as <see cref="DeadLetterWriteFailed"/> inside a <see cref="HandlerFault"/>.
     /// </summary>
-    void Move(Envelope envelope, Exception cause);
+    ValueTask MoveAsync(Envelope envelope, Exception cause, CancellationToken cancellationToken = default);
 }

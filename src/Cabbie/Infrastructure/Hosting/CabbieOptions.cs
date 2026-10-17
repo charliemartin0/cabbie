@@ -45,6 +45,27 @@ public sealed class CabbieOptions
         Policies.OnException<TException>();
 
     /// <summary>
+    /// Default policy for exceptions no <see cref="OnException{TException}"/> rule matches, on queue deliveries only
+    /// (<c>InvokeAsync</c> never retries or dead-letters by default). The built-in default retries once per entry of
+    /// <see cref="DefaultRetryDelays"/>, then dead-letters. The first call replaces it with an empty chain that you
+    /// fill by chaining actions; later calls append to that chain. With no chained actions, unmatched exceptions fail
+    /// fast. <see cref="DefaultRetryDelays"/> is ignored once this is called.
+    /// </summary>
+    public OnExceptionExpression OnUnmatchedException() => Policies.OnUnmatchedException();
+
+    /// <summary>
+    /// Cooldowns of the built-in default policy: one retry after each delay, in order, then dead-letter
+    /// (default 100ms, 500ms, 2s). Empty means dead-letter on the first failure. Delays must not be negative.
+    /// </summary>
+    public IReadOnlyList<TimeSpan> DefaultRetryDelays { get; set; } = ErrorPolicyCatalog.BuiltInRetryDelays;
+
+    /// <summary>
+    /// Per-attempt handler timeout for every handler without a <see cref="HandlerTimeoutAttribute"/>.
+    /// Null (the default) means no timeout. Must be greater than zero when set.
+    /// </summary>
+    public TimeSpan? HandlerTimeout { get; set; }
+
+    /// <summary>
     /// Opt this host into the transactional outbox middleware.
     /// <para>
     /// This slice ships the staging + commit; the pending envelopes still need a relay to

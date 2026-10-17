@@ -23,6 +23,7 @@ using Cabbie.Infrastructure.Transports;
 using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace Cabbie;
 
@@ -55,6 +56,13 @@ public static class CabbieHostBuilderExtensions
 
         var options = new CabbieOptions();
         configure?.Invoke(options);
+        if (options.HandlerTimeout is { } handlerTimeout)
+        {
+            Executor.ValidateHandlerTimeout(handlerTimeout, nameof(CabbieOptions.HandlerTimeout));
+        }
+
+        options.Policies.UseDefaultRetryDelays(options.DefaultRetryDelays);
+
         services.AddSingleton(options);
 
         var scanned = new HandlerCatalog();
@@ -117,7 +125,10 @@ public static class CabbieHostBuilderExtensions
             scheduled: services.GetRequiredService<IScheduledEnvelopeHold>(),
             attempts: services.GetRequiredService<IHandlerAttemptObserver>(),
             enqueuer: () => services.GetRequiredService<IPublishEnqueuer>(),
-            scopes: services.GetRequiredService<IServiceScopeFactory>()));
+            scopes: services.GetRequiredService<IServiceScopeFactory>(),
+            handlerTimeout: options.HandlerTimeout,
+            logger: services.GetService<ILogger<Executor>>(),
+            timeProvider: services.GetService<TimeProvider>()));
         services.AddSingleton<MessageDelivery>(services => new MessageDelivery(
             services.GetRequiredService<HandlerCatalog>(),
             services.GetRequiredService<Executor>(),

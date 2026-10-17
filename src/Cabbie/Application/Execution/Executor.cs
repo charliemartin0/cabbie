@@ -10,6 +10,8 @@ using Cabbie.Domain.Envelope;
 using Cabbie.Domain.Envelope.ValueObjects;
 using Cabbie.Domain.Errors.ValueObjects;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Cabbie.Application.Execution;
 
@@ -28,6 +30,8 @@ public sealed class Executor
     private readonly IHandlerAttemptObserver? _attempts;
     private readonly Func<IPublishEnqueuer>? _enqueuer;
     private readonly IServiceScopeFactory _scopes;
+    private readonly TimeSpan? _handlerTimeout;
+    private readonly ILogger<Executor> _logger;
 
     /// <summary>
     /// Used when no container is supplied: an empty provider, so handlers are built by
@@ -35,6 +39,10 @@ public sealed class Executor
     /// </summary>
     private static readonly IServiceScopeFactory EmptyScopes =
         new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+
+    private static readonly TimeSpan MaxHandlerTimeout = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
+
+    private readonly TimeProvider _time;
 
     public Executor(
         ErrorPolicyCatalog policies,
@@ -44,9 +52,17 @@ public sealed class Executor
         IScheduledEnvelopeHold? scheduled = null,
         IHandlerAttemptObserver? attempts = null,
         Func<IPublishEnqueuer>? enqueuer = null,
-        IServiceScopeFactory? scopes = null)
+        IServiceScopeFactory? scopes = null,
+        TimeSpan? handlerTimeout = null,
+        ILogger<Executor>? logger = null,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(policies);
+        if (handlerTimeout is { } timeoutLimit)
+        {
+            ValidateHandlerTimeout(timeoutLimit, nameof(handlerTimeout));
+        }
+
         _policies = policies;
         _errorQueue = errorQueue;
         _missingHandler = missingHandler;
@@ -55,6 +71,18 @@ public sealed class Executor
         _attempts = attempts;
         _enqueuer = enqueuer;
         _scopes = scopes ?? EmptyScopes;
+        _handlerTimeout = handlerTimeout;
+        _logger = logger ?? NullLogger<Executor>.Instance;
+        _time = timeProvider ?? TimeProvider.System;
+    }
+
+    /// <summary>
+    /// A handler timeout must be positive and no longer than <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/> allows.
+    /// </summary>
+    internal static void ValidateHandlerTimeout(TimeSpan timeout, string paramName)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero, paramName);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(timeout, MaxHandlerTimeout, paramName);
     }
 
     public Task<object?> InvokeAsync(
@@ -102,28 +130,45 @@ public sealed class Executor
         InvocationKind kind)
     {
         Envelope current = envelope;
+        TimeSpan? timeout = handler.Timeout ?? _handlerTimeout;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            using CancellationTokenSource? timeoutCts = timeout is { } budget
+                ? new CancellationTokenSource(budget, _time)
+                : null;
+            using CancellationTokenSource? linkedCts = timeoutCts is null
+                ? null
+                : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+            CancellationToken attemptToken = linkedCts?.Token ?? cancellationToken;
             try
             {
                 object? result = await _middleware.InvokeAsync(
                     MiddlewareLayer.Inner,
                     current,
                     handler,
-                    () => InvokeOnce(current, handler, cancellationToken),
-                    cancellationToken);
+                    () => InvokeOnce(current, handler, attemptToken),
+                    attemptToken);
                 _attempts?.OnAttempt(current, handler, exception: null);
                 return result;
             }
             catch (Exception exception)
             {
                 Exception fault = Unwrap(exception);
-                if (fault is OperationCanceledException
-                    or MiddlewareNextViolation
-                    or ScheduleRetryNotSupportedOnInvoke
-                    or NestedTrackNotSupported
-                    or TrackInProgress)
+                if (fault is OperationCanceledException timedOut
+                    && timeoutCts is { IsCancellationRequested: true }
+                    && !cancellationToken.IsCancellationRequested)
+                {
+                    fault = new HandlerTimedOut(handler.HandlerType, timeout!.Value, timedOut);
+                }
+
+                // Only the caller's cancellation is a cancellation; any other OperationCanceledException
+                // (an HTTP client timeout, say) is a fault and goes through the policy.
+                if ((fault is OperationCanceledException && cancellationToken.IsCancellationRequested)
+                    || fault is MiddlewareNextViolation
+                        or ScheduleRetryNotSupportedOnInvoke
+                        or NestedTrackNotSupported
+                        or TrackInProgress)
                 {
                     ExceptionDispatchInfo.Capture(fault).Throw();
                     throw;
@@ -165,7 +210,10 @@ public sealed class Executor
         CancellationToken cancellationToken,
         InvocationKind kind)
     {
-        ErrorPolicyLookup lookup = _policies.For(fault.GetType(), handler.MessageClrType);
+        ErrorPolicyLookup lookup = _policies.For(
+            fault.GetType(),
+            handler.MessageClrType,
+            useDefault: kind is not InvocationKind.Invoke);
         if (lookup is not FoundErrorPolicy found)
         {
             throw new HandlerFault(fault);
@@ -184,12 +232,25 @@ public sealed class Executor
             case RetryWithCooldown cooldown:
                 if (cooldown.Delay > TimeSpan.Zero)
                 {
-                    await Task.Delay(cooldown.Delay, cancellationToken);
+                    await Task.Delay(cooldown.Delay, _time, cancellationToken);
                 }
 
                 return WithNextAttempt(current);
             case MoveToErrorQueue:
-                _errorQueue?.Move(current, fault);
+                if (_errorQueue is not null)
+                {
+                    try
+                    {
+                        await _errorQueue.MoveAsync(current, fault, cancellationToken);
+                    }
+                    catch (Exception writeFailure) when (
+                        writeFailure is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                    {
+                        ExecutorLog.DeadLetterWriteFailed(_logger, writeFailure, current.Id.Value, handler.HandlerType);
+                        throw new HandlerFault(new DeadLetterWriteFailed(current.Id.Value, fault, writeFailure));
+                    }
+                }
+
                 throw new HandlerFault(fault);
             case ScheduleRetry retry:
                 if (kind is InvocationKind.Invoke)
