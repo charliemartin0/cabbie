@@ -1,9 +1,9 @@
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Cabbie.Application.Bus;
 using Cabbie.Application.Execution;
 using Cabbie.Application.Persistence;
 using Cabbie.Tests.Handlers;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Cabbie.Tests.Infrastructure.Persistence;
 

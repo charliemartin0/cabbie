@@ -1,9 +1,9 @@
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Cabbie.Application.Bus;
 using Cabbie.Application.Discovery;
 using Cabbie.Application.Execution;
 using Cabbie.Domain.Envelope;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Cabbie.Tests.Application.Bus;
 

@@ -1,9 +1,9 @@
 using Cabbie.Application.Bus;
 using Cabbie.Application.Cascades;
 using Cabbie.Application.Scheduling;
-using Cabbie.Infrastructure.Scheduling;
 using Cabbie.Domain.Envelope.ValueObjects;
 using Cabbie.Domain.Sagas.ValueObjects;
+using Cabbie.Infrastructure.Scheduling;
 using Cabbie.Tests.Domain;
 using Cabbie.Tests.Domain.Envelope;
 

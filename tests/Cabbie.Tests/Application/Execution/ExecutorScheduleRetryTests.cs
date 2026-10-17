@@ -1,11 +1,11 @@
 using Cabbie.Application.Discovery;
 using Cabbie.Application.Execution;
 using Cabbie.Application.Scheduling;
-using Cabbie.Infrastructure.Scheduling;
 using Cabbie.Domain.Envelope;
 using Cabbie.Domain.Errors.ValueObjects;
 using Cabbie.Domain.Messaging;
 using Cabbie.Domain.Messaging.ValueObjects;
+using Cabbie.Infrastructure.Scheduling;
 using Cabbie.Tests.Domain;
 using Cabbie.Tests.Domain.Envelope;
 
