@@ -5,11 +5,11 @@ using Cabbie.Application.Persistence;
 using Cabbie.Application.Routing;
 using Cabbie.Application.Scheduling;
 using Cabbie.Application.Transports;
-using Cabbie.Infrastructure.Scheduling;
 using Cabbie.Domain.Envelope;
 using Cabbie.Domain.Envelope.ValueObjects;
 using Cabbie.Domain.Messaging;
 using Cabbie.Domain.Messaging.ValueObjects;
+using Cabbie.Infrastructure.Scheduling;
 
 namespace Cabbie.Application.Bus;
 
@@ -191,7 +191,7 @@ public sealed class MessageDelivery
             ITransport transport = _transport();
             foreach (object message in immediate)
             {
-                await transport.SendAsync(Build(message, DateTimeOffset.UtcNow, null, parent));
+                await transport.SendAsync(Build(message, DateTimeOffset.UtcNow, null, parent), ct);
             }
         }
 
