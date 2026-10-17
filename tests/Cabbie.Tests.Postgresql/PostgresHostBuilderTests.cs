@@ -1,5 +1,3 @@
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Cabbie;
 using Cabbie.Application.Bus;
 using Cabbie.Application.Execution;
@@ -8,6 +6,8 @@ using Cabbie.Application.Sagas;
 using Cabbie.Domain.Sagas;
 using Cabbie.Domain.Sagas.ValueObjects;
 using Cabbie.Postgresql;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Npgsql;
 
 namespace Cabbie.Tests.Postgresql;

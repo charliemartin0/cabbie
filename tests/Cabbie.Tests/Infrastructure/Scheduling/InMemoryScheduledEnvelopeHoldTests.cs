@@ -1,6 +1,6 @@
 using Cabbie.Application.Scheduling;
-using Cabbie.Infrastructure.Scheduling;
 using Cabbie.Domain.Envelope.ValueObjects;
+using Cabbie.Infrastructure.Scheduling;
 using Cabbie.Tests.Domain.Envelope;
 
 namespace Cabbie.Tests.Infrastructure.Scheduling;

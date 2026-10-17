@@ -1,11 +1,11 @@
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Cabbie.Application.Bus;
 using Cabbie.Application.Discovery;
 using Cabbie.Application.Routing;
 using Cabbie.Domain.Envelope;
 using Cabbie.Domain.Envelope.ValueObjects;
 using Cabbie.Infrastructure.LocalQueues;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Cabbie.Tests.Infrastructure.LocalQueues;
 

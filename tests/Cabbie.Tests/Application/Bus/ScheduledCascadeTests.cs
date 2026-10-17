@@ -4,8 +4,8 @@ using Cabbie.Application.Discovery;
 using Cabbie.Application.Execution;
 using Cabbie.Application.Scheduling;
 using Cabbie.Application.Tracking;
-using Cabbie.Infrastructure.Scheduling;
 using Cabbie.Domain.Envelope;
+using Cabbie.Infrastructure.Scheduling;
 
 namespace Cabbie.Tests.Application.Bus;
 

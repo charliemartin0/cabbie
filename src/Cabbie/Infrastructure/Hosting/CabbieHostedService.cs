@@ -1,5 +1,5 @@
-using Microsoft.Extensions.Hosting;
 using Cabbie.Infrastructure.LocalQueues;
+using Microsoft.Extensions.Hosting;
 
 namespace Cabbie.Infrastructure.Hosting;
 

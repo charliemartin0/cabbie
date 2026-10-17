@@ -1,6 +1,6 @@
-using FluentValidation.TestHelper;
 using Cabbie.Domain.Errors.Validators;
 using Cabbie.Domain.Errors.ValueObjects;
+using FluentValidation.TestHelper;
 
 namespace Cabbie.Tests.Domain.Errors;
 

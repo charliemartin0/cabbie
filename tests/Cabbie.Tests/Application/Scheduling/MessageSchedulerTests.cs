@@ -3,8 +3,8 @@ using Cabbie.Application.Cascades;
 using Cabbie.Application.Discovery;
 using Cabbie.Application.Execution;
 using Cabbie.Application.Scheduling;
-using Cabbie.Infrastructure.Scheduling;
 using Cabbie.Domain.Envelope;
+using Cabbie.Infrastructure.Scheduling;
 using Cabbie.Tests.Domain;
 
 namespace Cabbie.Tests.Application.Scheduling;
