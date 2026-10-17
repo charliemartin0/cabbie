@@ -39,9 +39,12 @@ public static class CabbieHostBuilderExtensions
     }
 
     /// <summary>
-    /// Registers Cabbie. Handler assemblies are scanned here, so an invalid handler signature
-    /// throws now, and every instance handler is registered scoped: the Executor creates one
-    /// scope per handler invocation and resolves the handler and its method services from it.
+    /// Registers Cabbie. Handler assemblies are scanned and the catalog validated here, so an
+    /// invalid handler signature or catalog throws now, and every instance handler not already
+    /// registered is registered scoped: the Executor creates one scope per handler invocation and
+    /// resolves the handler and its method services from it. A registration the application adds
+    /// later for the same type wins, because the container resolves the last one; the startup check
+    /// then leaves that handler's constructor alone.
     /// Handlers added to the catalog later (not scanned here) are built with ActivatorUtilities.
     /// </summary>
     public static IServiceCollection AddCabbie(
@@ -60,30 +63,28 @@ public static class CabbieHostBuilderExtensions
             scanned.Scan(assembly);
         }
 
-        var registered = new HashSet<Type>();
+        FluentValidation.Results.ValidationResult validation = new HandlerCatalogValidator().Validate(scanned);
+        if (!validation.IsValid)
+        {
+            throw new ValidationException(validation.Errors);
+        }
+
+        var added = new HashSet<ServiceDescriptor>();
         foreach (Type handlerType in scanned.Handlers
             .Where(handler => !handler.IsStatic)
             .Select(handler => handler.HandlerType)
             .Where(type => !type.IsAbstract && !type.IsAssignableTo(typeof(Saga)))
             .Distinct())
         {
-            if (!services.Any(descriptor => descriptor.ServiceType == handlerType))
+            if (!services.Any(descriptor => !descriptor.IsKeyedService && descriptor.ServiceType == handlerType))
             {
-                services.AddScoped(handlerType);
-                registered.Add(handlerType);
+                var descriptor = ServiceDescriptor.Scoped(handlerType, handlerType);
+                services.Add(descriptor);
+                added.Add(descriptor);
             }
         }
 
-        services.AddSingleton<HandlerCatalog>(_ =>
-        {
-            FluentValidation.Results.ValidationResult validation = new HandlerCatalogValidator().Validate(scanned);
-            if (!validation.IsValid)
-            {
-                throw new ValidationException(validation.Errors);
-            }
-
-            return scanned;
-        });
+        services.AddSingleton(scanned);
         services.AddSingleton(options.Policies);
         services.AddSingleton<IOutboxStore>(
             services => services.GetRequiredService<IMessageStore>().Outbox);
@@ -141,7 +142,7 @@ public static class CabbieHostBuilderExtensions
             enqueuer: services.GetRequiredService<IPublishEnqueuer>(),
             attempts: services.GetRequiredService<IHandlerAttemptObserver>()));
         services.AddSingleton<IMessageBus>(services => services.GetRequiredService<Mediator>());
-        services.AddSingleton(new CabbieHandlerRegistrations(registered));
+        services.AddSingleton(new CabbieHandlerRegistrations(services, added));
         services.AddSingleton<IHostedService, HandlerDependencyStartupCheck>();
         services.AddSingleton<CabbieHostedService>();
         services.AddSingleton<IHostedService>(

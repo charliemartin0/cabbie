@@ -208,6 +208,24 @@ public sealed class ExecutorDependencyInjectionTests
     }
 
     [Fact]
+    public async Task missing_transitive_dependency_is_a_dependency_missing_fault_that_is_not_retried()
+    {
+        await using ServiceProvider provider = Build(services => services.AddScoped<MiddleService>());
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<InvalidOperationException>().Retry().Retry().Then.MoveToErrorQueue();
+        var attempts = new CountingAttemptObserver();
+        Executor executor = ExecutorFor(provider, policies, attempts);
+
+        HandlerFault fault = await Assert.ThrowsAsync<HandlerFault>(() =>
+            executor.InvokeAsync(MakeEnvelope(new NeedsTransitiveMessage()), Scan<NeedsTransitiveHandler>()));
+
+        HandlerDependencyMissing missing = Assert.IsType<HandlerDependencyMissing>(fault.InnerException);
+        Assert.Equal(typeof(NeedsTransitiveHandler), missing.HandlerType);
+        Assert.Contains(nameof(IUnregisteredService), missing.Message);
+        Assert.Equal(1, attempts.Attempts);
+    }
+
+    [Fact]
     public async Task scope_is_disposed_when_the_handler_is_cancelled()
     {
         var sink = new DiSink();
@@ -392,6 +410,18 @@ public sealed record RegisteredOnlyMessage;
 public sealed class RegisteredOnlyHandler(string origin)
 {
     public string Handle(RegisteredOnlyMessage message) => origin;
+}
+
+public sealed record NeedsTransitiveMessage;
+
+public sealed class MiddleService(IUnregisteredService inner)
+{
+    public IUnregisteredService Inner => inner;
+}
+
+public sealed class NeedsTransitiveHandler(MiddleService middle)
+{
+    public void Handle(NeedsTransitiveMessage message) => _ = middle;
 }
 
 public sealed record RetryScopeMessage;

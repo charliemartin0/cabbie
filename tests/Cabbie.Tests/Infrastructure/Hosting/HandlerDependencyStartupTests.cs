@@ -1,3 +1,5 @@
+using Cabbie.Application.Bus;
+using Cabbie.Tests.FactoryHandlers;
 using Cabbie.Application.Discovery;
 using Cabbie.Application.Execution;
 using Cabbie.Tests.Application.Execution;
@@ -61,11 +63,49 @@ public sealed class HandlerDependencyStartupTests
         var catalog = new HandlerCatalog();
         catalog.Scan(typeof(NeedsCtorServiceHandler));
 
-        HandlerDependencyValidator.Validate(catalog, isService, new HashSet<Type>());
+        HandlerDependencyValidator.Validate(catalog, isService, _ => false);
         HandlerDependencyMissing missing = Assert.Throws<HandlerDependencyMissing>(
-            () => HandlerDependencyValidator.Validate(catalog, isService, new HashSet<Type> { typeof(NeedsCtorServiceHandler) }));
+            () => HandlerDependencyValidator.Validate(catalog, isService, type => type == typeof(NeedsCtorServiceHandler)));
 
         Assert.Equal(typeof(IUnregisteredService), missing.ServiceType);
+    }
+
+    [Fact]
+    public async Task handler_registered_with_a_factory_after_add_cabbie_is_not_second_guessed_and_is_the_one_used()
+    {
+        // FactoryBuiltHandler is scanned by AddCabbie, which registers it by type first; the
+        // factory registered afterwards wins, so its string constructor must not fail startup.
+        var sink = new List<string>();
+        var builder = Host.CreateApplicationBuilder();
+        builder.UseCabbie(options => options.HandlerAssemblies.Add(typeof(FactoryBuiltHandler).Assembly));
+        builder.Services.AddScoped(_ => new FactoryBuiltHandler("from-factory", sink));
+        using IHost host = builder.Build();
+
+        await host.StartAsync();
+        try
+        {
+            await host.Services.GetRequiredService<IMessageBus>().InvokeAsync(new FactoryBuiltMessage());
+
+            Assert.Equal(["from-factory"], sink);
+        }
+        finally
+        {
+            await host.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task keyed_registrations_do_not_count_as_the_applications_registration_of_a_handler()
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.UseCabbie(options => options.HandlerAssemblies.Add(typeof(FactoryBuiltHandler).Assembly));
+        builder.Services.AddKeyedScoped("other", (_, _) => new FactoryBuiltHandler("keyed", []));
+        using IHost host = builder.Build();
+
+        HandlerDependencyMissing missing = await Assert.ThrowsAsync<HandlerDependencyMissing>(() => host.StartAsync());
+
+        Assert.Equal(typeof(FactoryBuiltHandler), missing.HandlerType);
+        Assert.Equal(typeof(string), missing.ServiceType);
     }
 
     private static IHost BuildHostWith(Type handlerType)

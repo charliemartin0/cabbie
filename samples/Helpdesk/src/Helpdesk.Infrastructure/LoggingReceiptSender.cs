@@ -4,7 +4,10 @@ using Microsoft.Extensions.Logging;
 
 namespace Helpdesk.Infrastructure;
 
-public sealed class LoggingReceiptSender(ILogger<LoggingReceiptSender> logger) : IReceiptSender
+public sealed partial class LoggingReceiptSender(ILogger<LoggingReceiptSender> logger) : IReceiptSender
 {
-    public void Send(OrderId id) => logger.LogInformation("Sent receipt for order {OrderId}", id);
+    public void Send(OrderId id) => LogSent(id);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Sent receipt for order {OrderId}")]
+    private partial void LogSent(OrderId orderId);
 }
