@@ -1,0 +1,79 @@
+using Cabbie.Application.Discovery;
+using Cabbie.Application.Execution;
+using Cabbie.Tests.Application.Execution;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+
+namespace Cabbie.Tests.Infrastructure.Hosting;
+
+/// <summary>
+/// Prove-with for fail-fast DI: a handler that needs a service the container does not know
+/// stops host startup, naming the handler, the parameter and the service type.
+/// </summary>
+public sealed class HandlerDependencyStartupTests
+{
+    [Fact]
+    public async Task startup_fails_when_a_handler_method_parameter_is_not_registered()
+    {
+        using IHost host = BuildHostWith(typeof(NeedsMethodServiceHandler));
+
+        HandlerDependencyMissing missing = await Assert.ThrowsAsync<HandlerDependencyMissing>(() => host.StartAsync());
+
+        Assert.Equal(typeof(NeedsMethodServiceHandler), missing.HandlerType);
+        Assert.Equal(typeof(IUnregisteredService), missing.ServiceType);
+        Assert.Contains("'service'", missing.Message);
+        Assert.Contains(typeof(NeedsMethodServiceHandler).FullName!, missing.Message);
+    }
+
+    [Fact]
+    public async Task startup_fails_when_a_handler_constructor_parameter_is_not_registered()
+    {
+        using IHost host = BuildHostWith(typeof(NeedsCtorServiceHandler));
+
+        HandlerDependencyMissing missing = await Assert.ThrowsAsync<HandlerDependencyMissing>(() => host.StartAsync());
+
+        Assert.Equal(typeof(NeedsCtorServiceHandler), missing.HandlerType);
+        Assert.Equal(typeof(IUnregisteredService), missing.ServiceType);
+        Assert.Contains("constructor parameter 'service'", missing.Message);
+    }
+
+    [Fact]
+    public async Task startup_accepts_a_handler_the_application_registered_itself()
+    {
+        // string is not a service: only the factory registration can build this handler.
+        var builder = Host.CreateApplicationBuilder();
+        builder.UseCabbie();
+        builder.Services.AddScoped(_ => new RegisteredOnlyHandler("from-container"));
+        using IHost host = builder.Build();
+        host.Services.GetRequiredService<HandlerCatalog>().Scan(typeof(RegisteredOnlyHandler));
+
+        await host.StartAsync();
+        await host.StopAsync();
+    }
+
+    [Fact]
+    public void constructors_are_checked_for_handlers_cabbie_registered_but_not_for_the_applications_own()
+    {
+        var services = new ServiceCollection();
+        services.AddScoped<NeedsCtorServiceHandler>();
+        using ServiceProvider provider = services.BuildServiceProvider();
+        var isService = provider.GetRequiredService<IServiceProviderIsService>();
+        var catalog = new HandlerCatalog();
+        catalog.Scan(typeof(NeedsCtorServiceHandler));
+
+        HandlerDependencyValidator.Validate(catalog, isService, new HashSet<Type>());
+        HandlerDependencyMissing missing = Assert.Throws<HandlerDependencyMissing>(
+            () => HandlerDependencyValidator.Validate(catalog, isService, new HashSet<Type> { typeof(NeedsCtorServiceHandler) }));
+
+        Assert.Equal(typeof(IUnregisteredService), missing.ServiceType);
+    }
+
+    private static IHost BuildHostWith(Type handlerType)
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.UseCabbie();
+        IHost host = builder.Build();
+        host.Services.GetRequiredService<HandlerCatalog>().Scan(handlerType);
+        return host;
+    }
+}

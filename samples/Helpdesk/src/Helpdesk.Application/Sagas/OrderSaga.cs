@@ -1,6 +1,7 @@
 using Helpdesk.Domain;
 using Cabbie.Application.Cascades;
 using Cabbie.Domain.Sagas;
+using Microsoft.Extensions.Logging;
 
 namespace Helpdesk.Application.Sagas;
 
@@ -46,9 +47,10 @@ public sealed class OrderSaga : Saga
         Status = OrderStatus.Charged;
     }
 
-    public void Handle(PaymentCharged message)
+    public void Handle(PaymentCharged message, ILogger<OrderSaga> logger)
     {
         Status = OrderStatus.CompletedByPayment;
+        logger.LogInformation("Order {OrderId} completed by payment {PaymentRef}", message.Id, message.PaymentRef);
         MarkCompleted();
     }
 

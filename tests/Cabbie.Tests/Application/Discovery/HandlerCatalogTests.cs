@@ -129,15 +129,27 @@ public sealed class HandlerCatalogTests
     }
 
     [Fact]
-    public void scan_rejects_a_handler_with_an_unknown_injection_slot()
+    public void scan_accepts_a_handler_with_a_service_injection_slot()
+    {
+        var catalog = new HandlerCatalog();
+
+        catalog.Scan(typeof(ChargePaymentHandler));
+
+        DiscoveredHandler handler = Assert.Single(catalog.Handlers);
+        Assert.Equal(typeof(ChargePaymentHandler), handler.HandlerType);
+        Assert.Equal(typeof(ChargePayment), handler.MessageClrType);
+    }
+
+    [Fact]
+    public void scan_rejects_a_saga_without_a_parameterless_constructor()
     {
         var catalog = new HandlerCatalog();
 
         InvalidHandlerSignature error = Assert.Throws<InvalidHandlerSignature>(
-            () => catalog.Scan(typeof(ChargePaymentHandler)));
+            () => catalog.Scan(typeof(SagaWithConstructorArguments)));
 
-        Assert.Equal(typeof(ChargePaymentHandler), error.HandlerType);
-        Assert.Contains("parameter 'gateway'", error.Message);
+        Assert.Equal(typeof(SagaWithConstructorArguments), error.HandlerType);
+        Assert.Contains("parameterless constructor", error.Message);
         Assert.Empty(catalog.Handlers);
     }
 

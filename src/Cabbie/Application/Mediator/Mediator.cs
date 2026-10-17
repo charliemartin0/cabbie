@@ -16,6 +16,7 @@ using Cabbie.Domain.Messaging;
 using Cabbie.Domain.Messaging.ValueObjects;
 using Cabbie.Domain.Sagas;
 using Cabbie.Domain.Sagas.ValueObjects;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Cabbie.Application.Mediator;
 
@@ -318,7 +319,7 @@ public sealed class Mediator : IMessageBus
             object? started = null;
             object? result = await _executor.InvokeAsync(
                 sagaEnvelope,
-                handler with { ResolveTarget = () => started = Activator.CreateInstance(sagaType) },
+                handler with { ResolveTarget = services => started = ActivatorUtilities.CreateInstance(services, sagaType) },
                 cancellationToken);
             return ((Saga)started!, result);
         }
@@ -332,7 +333,7 @@ public sealed class Mediator : IMessageBus
         object? loaded = null;
         object? handled = await _executor.InvokeAsync(
             sagaEnvelope,
-            handler with { ResolveTarget = () => loaded = _sagas.Load(sagaType, sagaId) },
+            handler with { ResolveTarget = _ => loaded = _sagas.Load(sagaType, sagaId) },
             cancellationToken);
         return ((Saga)loaded!, handled);
     }
@@ -351,7 +352,7 @@ public sealed class Mediator : IMessageBus
 
         return await _executor.InvokeAsync(
             envelope,
-            notFound with { ResolveTarget = () => Activator.CreateInstance(handler.HandlerType) },
+            notFound with { ResolveTarget = services => ActivatorUtilities.CreateInstance(services, handler.HandlerType) },
             cancellationToken);
     }
 

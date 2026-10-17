@@ -71,13 +71,13 @@ public sealed class HandlerConventionTests
     }
 
     [Fact]
-    public void extra_parameter_that_is_not_envelope_or_cancellation_token_throws()
+    public void extra_parameter_that_is_a_service_is_an_injection_slot()
     {
-        InvalidHandlerSignature error = Assert.Throws<InvalidHandlerSignature>(
-            () => HandlerConvention.For(DiscoveryMethods.PublicOn<ChargePaymentHandler>(nameof(ChargePaymentHandler.HandleAsync))));
+        DiscoveredHandler? discovered = HandlerConvention.For(
+            DiscoveryMethods.PublicOn<ChargePaymentHandler>(nameof(ChargePaymentHandler.HandleAsync)));
 
-        Assert.Equal(typeof(ChargePaymentHandler), error.HandlerType);
-        Assert.Contains("parameter 'gateway'", error.Message);
+        Assert.NotNull(discovered);
+        Assert.Contains(discovered.InjectionSlots, slot => slot.ParameterType == typeof(IPaymentGateway));
     }
 
     [Fact]

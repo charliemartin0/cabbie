@@ -4,7 +4,7 @@ using Cabbie.Application.Execution;
 namespace Cabbie.Application.Discovery;
 
 /// <summary>
-/// A public handler method found by convention. Extra parameters are injection slots, not resolved here.
+/// A public handler method found by convention. Extra parameters are injection slots: Envelope, CancellationToken, or scoped services.
 /// </summary>
 public sealed record DiscoveredHandler(
     MethodInfo Method,
@@ -12,7 +12,7 @@ public sealed record DiscoveredHandler(
     Type MessageClrType,
     bool IsStatic,
     IReadOnlyList<ParameterInfo> InjectionSlots,
-    Func<object?>? ResolveTarget = null,
+    Func<IServiceProvider, object?>? ResolveTarget = null,
     bool Scheduled = false)
 {
     /// <summary>

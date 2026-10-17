@@ -162,6 +162,13 @@ public sealed class HandlerCatalog
 
     private static void EnsureValidSagaHandlers(Type handlerType, List<DiscoveredHandler> discovered)
     {
+        if (handlerType.GetConstructor(Type.EmptyTypes) is null)
+        {
+            throw new InvalidHandlerSignature(
+                handlerType,
+                $"Saga '{handlerType}' needs a public parameterless constructor: saga state is created and loaded by Cabbie, not resolved from the container. Take services as handler method parameters.");
+        }
+
         foreach (DiscoveredHandler handler in discovered)
         {
             if (handler.IsStatic)

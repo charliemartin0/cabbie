@@ -15,6 +15,7 @@ using Cabbie.Application.Scheduling;
 using Cabbie.Application.Serialization;
 using Cabbie.Application.Tracking;
 using Cabbie.Application.Transports;
+using Cabbie.Domain.Sagas;
 using Cabbie.Infrastructure.Hosting;
 using Cabbie.Infrastructure.LocalQueues;
 using Cabbie.Infrastructure.Persistence;
@@ -33,30 +34,61 @@ public static class CabbieHostBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
 
+        builder.Services.AddCabbie(configure);
+        return builder;
+    }
+
+    /// <summary>
+    /// Registers Cabbie. Handler assemblies are scanned here, so an invalid handler signature
+    /// throws now, and every instance handler is registered scoped: the Executor creates one
+    /// scope per handler invocation and resolves the handler and its method services from it.
+    /// Handlers added to the catalog later (not scanned here) are built with ActivatorUtilities.
+    /// </summary>
+    public static IServiceCollection AddCabbie(
+        this IServiceCollection services,
+        Action<CabbieOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
         var options = new CabbieOptions();
         configure?.Invoke(options);
-        builder.Services.AddSingleton(options);
-        builder.Services.AddSingleton<HandlerCatalog>(services =>
-        {
-            var catalog = new HandlerCatalog();
-            foreach (Assembly assembly in options.HandlerAssemblies)
-            {
-                catalog.Scan(assembly);
-            }
+        services.AddSingleton(options);
 
-            FluentValidation.Results.ValidationResult validation = new HandlerCatalogValidator().Validate(catalog);
+        var scanned = new HandlerCatalog();
+        foreach (Assembly assembly in options.HandlerAssemblies)
+        {
+            scanned.Scan(assembly);
+        }
+
+        var registered = new HashSet<Type>();
+        foreach (Type handlerType in scanned.Handlers
+            .Where(handler => !handler.IsStatic)
+            .Select(handler => handler.HandlerType)
+            .Where(type => !type.IsAbstract && !type.IsAssignableTo(typeof(Saga)))
+            .Distinct())
+        {
+            if (!services.Any(descriptor => descriptor.ServiceType == handlerType))
+            {
+                services.AddScoped(handlerType);
+                registered.Add(handlerType);
+            }
+        }
+
+        services.AddSingleton<HandlerCatalog>(_ =>
+        {
+            FluentValidation.Results.ValidationResult validation = new HandlerCatalogValidator().Validate(scanned);
             if (!validation.IsValid)
             {
                 throw new ValidationException(validation.Errors);
             }
 
-            return catalog;
+            return scanned;
         });
-        builder.Services.AddSingleton(options.Policies);
-        builder.Services.AddSingleton<IOutboxStore>(
+        services.AddSingleton(options.Policies);
+        services.AddSingleton<IOutboxStore>(
             services => services.GetRequiredService<IMessageStore>().Outbox);
-        builder.Services.AddSingleton<TransactionalOutboxMiddleware>();
-        builder.Services.AddSingleton<MiddlewareCatalog>(services =>
+        services.AddSingleton<TransactionalOutboxMiddleware>();
+        services.AddSingleton<MiddlewareCatalog>(services =>
         {
             var catalog = new MiddlewareCatalog();
             if (options.EnableTransactionalOutbox)
@@ -66,40 +98,41 @@ public static class CabbieHostBuilderExtensions
 
             return catalog;
         });
-        builder.Services.AddSingleton(options.Routing);
-        builder.Services.AddSingleton<ISagaStore, InMemorySagaStore>();
-        builder.Services.AddSingleton<IScheduledEnvelopeHold, InMemoryScheduledEnvelopeHold>();
-        builder.Services.AddSingleton<IHandlerAttemptObserver, AttemptObserverHub>();
-        builder.Services.AddSingleton<ISerializer, JsonSerializer>();
-        builder.Services.AddSingleton<IMessageStore, InMemoryMessageStore>();
-        builder.Services.AddSingleton<IDeadLetterStore>(
+        services.AddSingleton(options.Routing);
+        services.AddSingleton<ISagaStore, InMemorySagaStore>();
+        services.AddSingleton<IScheduledEnvelopeHold, InMemoryScheduledEnvelopeHold>();
+        services.AddSingleton<IHandlerAttemptObserver, AttemptObserverHub>();
+        services.AddSingleton<ISerializer, JsonSerializer>();
+        services.AddSingleton<IMessageStore, InMemoryMessageStore>();
+        services.AddSingleton<IDeadLetterStore>(
             services => services.GetRequiredService<IMessageStore>().DeadLetter);
-        builder.Services.AddSingleton<IErrorQueue>(services => new DeadLetterQueueAdapter(
+        services.AddSingleton<IErrorQueue>(services => new DeadLetterQueueAdapter(
             services.GetRequiredService<IDeadLetterStore>()));
-        builder.Services.AddSingleton<Executor>(services => new Executor(
+        services.AddSingleton<Executor>(services => new Executor(
             services.GetRequiredService<ErrorPolicyCatalog>(),
             errorQueue: services.GetService<IErrorQueue>(),
             missingHandler: services.GetService<IMissingHandler>(),
             middleware: services.GetRequiredService<MiddlewareCatalog>(),
             scheduled: services.GetRequiredService<IScheduledEnvelopeHold>(),
             attempts: services.GetRequiredService<IHandlerAttemptObserver>(),
-            enqueuer: () => services.GetRequiredService<IPublishEnqueuer>()));
-        builder.Services.AddSingleton<MessageDelivery>(services => new MessageDelivery(
+            enqueuer: () => services.GetRequiredService<IPublishEnqueuer>(),
+            scopes: services.GetRequiredService<IServiceScopeFactory>()));
+        services.AddSingleton<MessageDelivery>(services => new MessageDelivery(
             services.GetRequiredService<HandlerCatalog>(),
             services.GetRequiredService<Executor>(),
             hold: services.GetRequiredService<IScheduledEnvelopeHold>(),
             routing: services.GetRequiredService<RoutingCatalog>(),
             transport: () => services.GetRequiredService<ITransport>()));
-        builder.Services.AddSingleton<LocalQueueCatalog>(services => new LocalQueueCatalog(
+        services.AddSingleton<LocalQueueCatalog>(services => new LocalQueueCatalog(
             (envelope, cancellationToken) => services.GetRequiredService<Mediator>()
                 .DispatchHandlers(envelope, scheduled: true, cancellationToken)));
-        builder.Services.AddSingleton<IPublishEnqueuer>(
+        services.AddSingleton<IPublishEnqueuer>(
             services => services.GetRequiredService<LocalQueueCatalog>());
-        builder.Services.AddSingleton<ITransport>(services => new LocalTransport(
+        services.AddSingleton<ITransport>(services => new LocalTransport(
             services.GetRequiredService<IPublishEnqueuer>(),
             (envelope, cancellationToken) => services.GetRequiredService<Mediator>()
                 .DispatchHandlers(envelope, scheduled: true, cancellationToken)));
-        builder.Services.AddSingleton<Mediator>(services => new Mediator(
+        services.AddSingleton<Mediator>(services => new Mediator(
             services.GetRequiredService<HandlerCatalog>(),
             executor: services.GetRequiredService<Executor>(),
             hold: services.GetRequiredService<IScheduledEnvelopeHold>(),
@@ -107,10 +140,12 @@ public static class CabbieHostBuilderExtensions
             routing: services.GetRequiredService<RoutingCatalog>(),
             enqueuer: services.GetRequiredService<IPublishEnqueuer>(),
             attempts: services.GetRequiredService<IHandlerAttemptObserver>()));
-        builder.Services.AddSingleton<IMessageBus>(services => services.GetRequiredService<Mediator>());
-        builder.Services.AddSingleton<CabbieHostedService>();
-        builder.Services.AddSingleton<IHostedService>(
+        services.AddSingleton<IMessageBus>(services => services.GetRequiredService<Mediator>());
+        services.AddSingleton(new CabbieHandlerRegistrations(registered));
+        services.AddSingleton<IHostedService, HandlerDependencyStartupCheck>();
+        services.AddSingleton<CabbieHostedService>();
+        services.AddSingleton<IHostedService>(
             services => services.GetRequiredService<CabbieHostedService>());
-        return builder;
+        return services;
     }
 }
