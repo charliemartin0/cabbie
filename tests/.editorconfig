@@ -1,0 +1,3 @@
+# Test names are snake_case behaviour sentences (see .cursor/rules/testing.mdc); CA1707 is enforced for src/ only.
+[*.cs]
+dotnet_diagnostic.CA1707.severity = none

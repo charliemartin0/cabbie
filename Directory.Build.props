@@ -4,5 +4,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <!-- Enables the Recommended .NET analyzer rule set. Existing violations are baselined as
+         "suggestion" in .editorconfig; every other rule is enforced via TreatWarningsAsErrors. -->
+    <AnalysisMode>Recommended</AnalysisMode>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 </Project>
