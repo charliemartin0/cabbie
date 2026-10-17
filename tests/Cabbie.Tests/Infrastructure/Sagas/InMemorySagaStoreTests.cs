@@ -1,5 +1,5 @@
-using Cabbie.Infrastructure.Sagas;
 using Cabbie.Domain.Sagas.ValueObjects;
+using Cabbie.Infrastructure.Sagas;
 using Cabbie.Tests.Application.Sagas;
 
 namespace Cabbie.Tests.Infrastructure.Sagas;

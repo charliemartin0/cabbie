@@ -1,8 +1,8 @@
+using Cabbie.Application.Bus;
+using Cabbie.Tests.Domain;
 using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Cabbie.Application.Bus;
-using Cabbie.Tests.Domain;
 
 namespace Cabbie.Tests.Application.Bus;
 

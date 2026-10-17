@@ -1,8 +1,8 @@
+using Cabbie.Application.Discovery;
+using Cabbie.Tests.InvalidCatalog;
 using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Cabbie.Application.Discovery;
-using Cabbie.Tests.InvalidCatalog;
 
 namespace Cabbie.Tests.Application.Discovery;
 

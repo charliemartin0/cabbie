@@ -1,8 +1,8 @@
+using Cabbie;
 using Helpdesk.Application.Sagas;
 using Helpdesk.Domain;
 using Helpdesk.Infrastructure;
 using Microsoft.Extensions.Hosting;
-using Cabbie;
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.UseCabbie(options =>

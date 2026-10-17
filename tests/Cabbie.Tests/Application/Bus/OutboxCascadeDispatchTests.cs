@@ -1,5 +1,3 @@
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Cabbie.Application.Bus;
 using Cabbie.Application.Discovery;
 using Cabbie.Application.Execution;
@@ -8,6 +6,8 @@ using Cabbie.Application.Sagas;
 using Cabbie.Domain.Envelope;
 using Cabbie.Domain.Sagas;
 using Cabbie.Domain.Sagas.ValueObjects;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Cabbie.Tests.Application.Bus;
 

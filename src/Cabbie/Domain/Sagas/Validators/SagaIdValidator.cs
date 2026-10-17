@@ -1,5 +1,5 @@
-using FluentValidation;
 using Cabbie.Domain.Sagas.ValueObjects;
+using FluentValidation;
 
 namespace Cabbie.Domain.Sagas.Validators;
 
