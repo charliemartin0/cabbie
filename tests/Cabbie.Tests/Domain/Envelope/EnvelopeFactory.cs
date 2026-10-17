@@ -21,7 +21,8 @@ internal static class EnvelopeFactory
         Headers? headers = null,
         string contentType = "",
         int attempts = 1,
-        byte[]? data = null)
+        byte[]? data = null,
+        CausationId? causationId = null)
     {
         var sent = sentAt ?? DateTimeOffset.UtcNow;
         return new Cabbie.Domain.Envelope.Envelope(
@@ -37,6 +38,7 @@ internal static class EnvelopeFactory
             headers ?? new Headers(),
             new ContentType(contentType),
             new Attempts(attempts),
-            data is null ? new EnvelopeData() : new EnvelopeData(data));
+            data is null ? new EnvelopeData() : new EnvelopeData(data),
+            causationId);
     }
 }

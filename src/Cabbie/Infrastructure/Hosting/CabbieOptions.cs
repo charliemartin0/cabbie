@@ -40,6 +40,38 @@ public sealed class CabbieOptions
 
     public PublishExpression PublishMessage<T>() => Routing.PublishMessage<T>();
 
+    /// <summary>
+    /// Endpoints this host listens to, in registration order. Started when the host starts and
+    /// stopped when it stops.
+    /// </summary>
+    internal List<Uri> ListenEndpoints { get; } = [];
+
+    /// <summary>
+    /// Listen to an endpoint given as an absolute URI string, e.g. <c>local://orders</c>. The scheme
+    /// picks the transport; a scheme with no registered transport fails host start.
+    /// </summary>
+    public CabbieOptions ListenTo(string uri)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        return ListenTo(new Uri(uri, UriKind.Absolute));
+    }
+
+    public CabbieOptions ListenTo(Uri uri)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        if (!uri.IsAbsoluteUri)
+        {
+            throw new ArgumentException("Endpoint URI must be absolute, e.g. local://orders.", nameof(uri));
+        }
+
+        if (!ListenEndpoints.Contains(uri))
+        {
+            ListenEndpoints.Add(uri);
+        }
+
+        return this;
+    }
+
     public OnExceptionExpression OnException<TException>()
         where TException : Exception =>
         Policies.OnException<TException>();

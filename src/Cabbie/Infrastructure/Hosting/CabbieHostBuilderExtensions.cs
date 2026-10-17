@@ -111,7 +111,10 @@ public static class CabbieHostBuilderExtensions
         services.AddSingleton<ISagaStore, InMemorySagaStore>();
         services.AddSingleton<IScheduledEnvelopeHold, InMemoryScheduledEnvelopeHold>();
         services.AddSingleton<IHandlerAttemptObserver, AttemptObserverHub>();
-        services.AddSingleton<ISerializer, JsonSerializer>();
+        services.AddSingleton<IMessageSerializer, JsonMessageSerializer>();
+        services.AddSingleton(services => new EnvelopeCodec(
+            services.GetRequiredService<IMessageSerializer>(),
+            services.GetRequiredService<HandlerCatalog>().MessageTypes));
         services.AddSingleton<IMessageStore, InMemoryMessageStore>();
         services.AddSingleton<IDeadLetterStore>(
             services => services.GetRequiredService<IMessageStore>().DeadLetter);
@@ -124,7 +127,7 @@ public static class CabbieHostBuilderExtensions
             middleware: services.GetRequiredService<MiddlewareCatalog>(),
             scheduled: services.GetRequiredService<IScheduledEnvelopeHold>(),
             attempts: services.GetRequiredService<IHandlerAttemptObserver>(),
-            enqueuer: () => services.GetRequiredService<IPublishEnqueuer>(),
+            sender: () => services.GetRequiredService<TransportRouter>(),
             scopes: services.GetRequiredService<IServiceScopeFactory>(),
             handlerTimeout: options.HandlerTimeout,
             logger: services.GetService<ILogger<Executor>>(),
@@ -134,23 +137,24 @@ public static class CabbieHostBuilderExtensions
             services.GetRequiredService<Executor>(),
             hold: services.GetRequiredService<IScheduledEnvelopeHold>(),
             routing: services.GetRequiredService<RoutingCatalog>(),
-            transport: () => services.GetRequiredService<ITransport>()));
+            sender: services.GetRequiredService<TransportRouter>()));
+        services.AddSingleton<IReceiver>(services => new EnvelopeReceiver(
+            (envelope, cancellationToken) => services.GetRequiredService<Mediator>()
+                .DispatchHandlers(envelope, scheduled: true, cancellationToken),
+            services.GetService<ILogger<EnvelopeReceiver>>()));
         services.AddSingleton<LocalQueueCatalog>(services => new LocalQueueCatalog(
-            (envelope, cancellationToken) => services.GetRequiredService<Mediator>()
-                .DispatchHandlers(envelope, scheduled: true, cancellationToken)));
-        services.AddSingleton<IPublishEnqueuer>(
-            services => services.GetRequiredService<LocalQueueCatalog>());
+            services.GetRequiredService<IReceiver>()));
         services.AddSingleton<ITransport>(services => new LocalTransport(
-            services.GetRequiredService<IPublishEnqueuer>(),
-            (envelope, cancellationToken) => services.GetRequiredService<Mediator>()
-                .DispatchHandlers(envelope, scheduled: true, cancellationToken)));
+            services.GetRequiredService<LocalQueueCatalog>()));
+        services.AddSingleton<TransportRouter>(services => new TransportRouter(
+            services.GetServices<ITransport>()));
         services.AddSingleton<Mediator>(services => new Mediator(
             services.GetRequiredService<HandlerCatalog>(),
             executor: services.GetRequiredService<Executor>(),
             hold: services.GetRequiredService<IScheduledEnvelopeHold>(),
             sagas: services.GetRequiredService<ISagaStore>(),
             routing: services.GetRequiredService<RoutingCatalog>(),
-            enqueuer: services.GetRequiredService<IPublishEnqueuer>(),
+            sender: services.GetRequiredService<TransportRouter>(),
             attempts: services.GetRequiredService<IHandlerAttemptObserver>()));
         services.AddSingleton<IMessageBus>(services => services.GetRequiredService<Mediator>());
         services.AddSingleton(new CabbieHandlerRegistrations(services, added));

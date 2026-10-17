@@ -16,10 +16,10 @@ namespace Cabbie.Application.Bus;
 /// <summary>
 /// One shared dispatch path for every envelope: look up the handler, run it through the
 /// Executor, then enqueue the handler's return values — delayed messages park in the
-/// scheduled hold, immediate ones go to the owning transport (local:// today). The
+/// scheduled hold, immediate ones go to the <see cref="ISender"/> (the transport router
+/// when hosted, which picks the transport by the destination's URI scheme). The
 /// Mediator binds its cascade/tracking hooks here; the local queues and transports use
-/// the transport fallback. The <see cref="ITransport"/> factory is lazy so Hosting can
-/// register the transport that itself needs this service.
+/// the sender fallback.
 /// </summary>
 public sealed class MessageDelivery
 {
@@ -29,8 +29,8 @@ public sealed class MessageDelivery
     private readonly Executor _executor;
     private readonly IScheduledEnvelopeHold _hold;
     private readonly RoutingCatalog _routing;
-    private readonly Func<ITransport>? _transport;
-    private readonly Action<object, Envelope>? _onImmediate;
+    private readonly ISender? _sender;
+    private readonly Func<object, Envelope, CancellationToken, ValueTask>? _onImmediate;
     private readonly ICascadePublisher? _cascades;
 
     public MessageDelivery(
@@ -38,8 +38,8 @@ public sealed class MessageDelivery
         Executor executor,
         IScheduledEnvelopeHold? hold = null,
         RoutingCatalog? routing = null,
-        Func<ITransport>? transport = null,
-        Action<object, Envelope>? onImmediate = null,
+        ISender? sender = null,
+        Func<object, Envelope, CancellationToken, ValueTask>? onImmediate = null,
         ICascadePublisher? cascades = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
@@ -48,7 +48,7 @@ public sealed class MessageDelivery
         _executor = executor;
         _hold = hold ?? new InMemoryScheduledEnvelopeHold();
         _routing = routing ?? new RoutingCatalog();
-        _transport = transport;
+        _sender = sender;
         _onImmediate = onImmediate;
         _cascades = cascades;
     }
@@ -183,15 +183,14 @@ public sealed class MessageDelivery
         {
             foreach (object message in immediate)
             {
-                _onImmediate(message, parent);
+                await _onImmediate(message, parent, ct);
             }
         }
-        else if (_transport is not null)
+        else if (_sender is not null)
         {
-            ITransport transport = _transport();
             foreach (object message in immediate)
             {
-                await transport.SendAsync(Build(message, DateTimeOffset.UtcNow, null, parent), ct);
+                await _sender.SendAsync(Build(message, DateTimeOffset.UtcNow, null, parent), ct);
             }
         }
 
@@ -218,6 +217,7 @@ public sealed class MessageDelivery
             new Headers(),
             new ContentType(""),
             new Attempts(1),
-            new EnvelopeData());
+            new EnvelopeData(),
+            new CausationId(parent.Id.Value));
     }
 }

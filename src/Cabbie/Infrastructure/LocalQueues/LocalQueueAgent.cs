@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Threading.Channels;
-using Cabbie.Application.Bus;
+using Cabbie.Application.Transports;
 using Cabbie.Domain.Envelope;
 
 namespace Cabbie.Infrastructure.LocalQueues;
@@ -8,39 +8,30 @@ namespace Cabbie.Infrastructure.LocalQueues;
 /// <summary>
 /// One in-process queue worker for a destination. Owns a channel and a single reader task.
 /// v1 is unbounded; back-pressure is a future slice. A durable queue is this agent plus Persistence.
-/// Dispatch (including cascade re-enqueueing) goes through the shared <see cref="MessageDelivery"/>.
+/// Each envelope goes to the <see cref="IReceiver"/> (Execution, including cascade re-enqueueing);
+/// a <see cref="ReceiveOutcome.Defer"/> puts it back on the queue, Ack and Nack drop it (local has
+/// no redelivery: the error policy already ran and the receiver logged a Nack).
 /// </summary>
 public sealed class LocalQueueAgent
 {
     private readonly Channel<Envelope> _channel = Channel.CreateUnbounded<Envelope>(
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
-    private readonly DispatchHandler _dispatch;
+    private readonly IReceiver _receiver;
     private volatile TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private volatile bool _paused;
     private volatile Task? _worker;
     private int _started;
 
-    public LocalQueueAgent(string name, MessageDelivery delivery)
-        : this(name, (envelope, cancellationToken) =>
-            delivery.Dispatch(envelope, scheduled: true, cancellationToken))
+    public LocalQueueAgent(string name, IReceiver receiver)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
-        ArgumentNullException.ThrowIfNull(delivery);
+        ArgumentNullException.ThrowIfNull(receiver);
+        Name = name;
+        _receiver = receiver;
     }
 
-    /// <summary>
-    /// Dispatch hook for the host: queue messages must route saga handlers through the
-    /// saga orchestration (load/save), not the plain executor path that would invoke
-    /// them on a fresh instance and drop the state.
-    /// </summary>
-    internal LocalQueueAgent(string name, DispatchHandler dispatch)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(name);
-        ArgumentNullException.ThrowIfNull(dispatch);
-        Name = name;
-        _dispatch = dispatch;
-    }
+    internal IReceiver Receiver => _receiver;
 
     public string Name { get; }
 
@@ -96,7 +87,11 @@ public sealed class LocalQueueAgent
                 await WaitWhilePausedAsync();
                 try
                 {
-                    await _dispatch(envelope, CancellationToken.None);
+                    ReceiveOutcome outcome = await _receiver.ReceiveAsync(envelope, CancellationToken.None);
+                    if (outcome == ReceiveOutcome.Defer)
+                    {
+                        _channel.Writer.TryWrite(envelope);
+                    }
                 }
                 catch (Exception exception)
                 {

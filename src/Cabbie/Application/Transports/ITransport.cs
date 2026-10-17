@@ -1,36 +1,32 @@
-using Cabbie.Domain.Envelope;
-
 namespace Cabbie.Application.Transports;
 
 /// <summary>
-/// A transport carries Envelopes between processes. The local:// transport hands
-/// outbound envelopes to the in-process queue and routes inbound envelopes straight
-/// through Execution. A future tcp:// transport (Infrastructure/Transports) reads and
-/// writes bytes on a socket; Cabbie.RabbitMQ is its ITransport; Cabbie.Http is
-/// another front door into the same Execution. Application knows only ITransport —
-/// the concrete type is wired in Hosting.
+/// A transport carries Envelopes between endpoints. It owns one URI scheme (<c>local</c>
+/// today; <c>sqs</c>, <c>sns</c> and others in adapter projects) and creates the two halves
+/// of an endpoint: an <see cref="ISender"/> for outbound envelopes and an
+/// <see cref="IListener"/> that hands inbound envelopes to an <see cref="IReceiver"/>.
+/// <see cref="TransportRouter"/> picks the transport by the scheme of the endpoint URI.
+/// Application knows only these ports; concrete transports are registered in Hosting
+/// (<c>services.AddSingleton&lt;ITransport, MyTransport&gt;()</c>).
 /// </summary>
 public interface ITransport
 {
     /// <summary>
-    /// URI scheme this transport handles, e.g. <c>local</c>, <c>tcp</c>, <c>rabbitmq</c>.
-    /// Routing uses the scheme on <see cref="Cabbie.Domain.Envelope.ValueObjects.Destination"/>
-    /// to pick the owning transport.
+    /// URI scheme this transport handles, e.g. <c>local</c>, <c>sqs</c>. Compared
+    /// case-insensitively; at most one transport may own a scheme.
     /// </summary>
     string Scheme { get; }
 
     /// <summary>
-    /// Outbound: hand the envelope to this transport's send path. <c>local://</c>
-    /// enqueues to the in-process queue (fire-and-forget); <c>tcp://</c> serializes
-    /// and writes to the wire.
+    /// Outbound: a sender for one endpoint. The router caches it per endpoint URI, so
+    /// implementations may hold connections or clients in it.
     /// </summary>
-    ValueTask SendAsync(Envelope envelope, CancellationToken cancellationToken = default);
+    ISender CreateSender(Uri address);
 
     /// <summary>
-    /// Inbound: deliver a deserialized envelope to Execution. Wire transports
-    /// deserialize bytes to <see cref="Envelope"/> before calling this; the caller's
-    /// <c>local://</c> variant looks up the handler and invokes via <c>Executor</c>
-    /// directly — no queue, no worker, the caller is already off the bus.
+    /// Inbound: a listener that delivers every envelope arriving at <paramref name="address"/>
+    /// to <paramref name="receiver"/> and acts on the returned <see cref="ReceiveOutcome"/>.
+    /// Nothing is received until <see cref="IListener.StartAsync"/>.
     /// </summary>
-    ValueTask DeliverAsync(Envelope envelope, CancellationToken cancellationToken = default);
+    IListener CreateListener(Uri address, IReceiver receiver);
 }

@@ -8,6 +8,7 @@ Cabbie is named for the driver of the hansom, the Victorian London cab — small
 - [Quickstart](#quickstart)
 - [Dependency injection](#dependency-injection)
 - [Error policies](#error-policies)
+- [Endpoints and transports](#endpoints-and-transports)
 - [Architecture](#architecture)
 - [Project Structure](#project-structure)
 - [Roadmap](#roadmap)
@@ -22,9 +23,10 @@ Cabbie is named for the driver of the hansom, the Victorian London cab — small
 - **Cascading messages** — handler return values become new messages after the handler succeeds. Throwing handlers publish nothing.
 - **Instance sagas** — long-running workflow state keyed by aggregate id, advanced by messages it cares about. `NotFound` swallows harmless late arrivals.
 - **Scheduled envelopes** — `[Timeout(Minutes = 1)]` on a message, parked until `PlayDue(asOf)`. Tests fast-forward without `Task.Delay`.
-- **Local queues** — in-process worker queues keyed by destination URI. `Pause`/`Resume` per queue, clean drain on host stop.
+- **Local queues** — in-process worker queues keyed by destination URI, behind the `local://` transport. `Pause`/`Resume` per queue, clean drain on host stop.
 - **In-memory inbox, outbox, dead-letter, and saga stores** — ports defined in Application, in-memory implementation in Infrastructure. The PostgreSQL adapter fills the durable version.
-- **JSON serialization** — `ISerializer` port + `System.Text.Json` implementation, content-type aware.
+- **JSON serialization** — `IMessageSerializer` port + `System.Text.Json` default, used at the transport boundary, content-type aware.
+- **Transport selection by URI scheme** — `ITransport`/`ISender`/`IListener`/`IReceiver` ports, a scheme-keyed registry, `ListenTo` endpoints.
 - **Observability hooks** — `ActivitySource`, `Meter`, per-attempt observers. No exporter baked in.
 - **Handler discovery by convention** — `HandlerConvention` walks opted-in assemblies. No source generation. Handlers may take constructor dependencies; extra method parameters after the message resolve from a per-message DI scope.
 - **Cached invoker** — one delegate dispatch per call. No reflection on the hot path.
@@ -86,6 +88,43 @@ builder.UseCabbie(options =>
 - Timeouts: `options.HandlerTimeout` sets a per-attempt timeout for every handler; `[HandlerTimeout(milliseconds)]` on a handler class or method overrides it (method, then class, then global). There is no per-handler opt-out of the global value. Each attempt gets its own clock, covering the handler and Inner middleware but not Outer middleware or the cooldowns between attempts. The timeout is cooperative: the handler's `CancellationToken` is cancelled, so a handler without a `CancellationToken` parameter cannot observe it, and a handler that ignores the token and returns still succeeds. An attempt that was cancelled by the timeout fails with `HandlerTimedOut`, which derives from `TimeoutException`, so `OnException<TimeoutException>()` matches it and `OnException<HandlerTimedOut>()` matches it more specifically. Only cancellation of the caller's token is a cancellation: it propagates as `OperationCanceledException` and no policy runs. Any other `OperationCanceledException` (an HTTP client timeout, say) is an ordinary fault and goes through the policy. Retry cooldowns and timeouts run on the container's `TimeProvider` (`TimeProvider.System` unless you register one).
 - Dead-letter: the write is awaited before `HandlerFault` is thrown. If the write itself fails, Cabbie logs an error (event id 1) and throws `HandlerFault` wrapping `DeadLetterWriteFailed`: its `InnerException` is the write error and its `OriginalFault` property is the original handler exception. This includes cancellation exceptions the store raises on its own (an SDK timeout, say); only a write interrupted because the caller's token was cancelled propagates as `OperationCanceledException`.
 
+## Endpoints and transports
+
+An endpoint is an absolute URI; its scheme picks the transport.
+
+```csharp
+builder.UseCabbie(options =>
+{
+    options.PublishMessage<PlaceOrder>().To("local://orders");
+    options.ListenTo("local://orders");
+});
+```
+
+- Defaults: `[LocalQueue("x")]` routes to `local://x/`, otherwise `local://{lowercased type name}/`. Local queues listen implicitly; `ListenTo` on a `local://` endpoint only starts the queue at host start.
+- Registering a transport: `services.AddSingleton<ITransport, MyTransport>()`. A transport owns one scheme and creates the two halves of an endpoint:
+
+```csharp
+public interface ITransport { string Scheme { get; } ISender CreateSender(Uri address); IListener CreateListener(Uri address, IReceiver receiver); }
+public interface ISender { ValueTask SendAsync(Envelope envelope, CancellationToken cancellationToken = default); }
+public interface IListener { Uri Address { get; } Task StartAsync(CancellationToken ct); Task StopAsync(CancellationToken ct); }
+public interface IReceiver { Task<ReceiveOutcome> ReceiveAsync(Envelope envelope, CancellationToken cancellationToken); }
+```
+
+- Startup failures: an explicit route or `ListenTo` whose scheme has no transport fails host start with `UnknownTransportScheme` (scheme, endpoint and registered schemes in the message). Two transports for one scheme fail with `DuplicateTransportScheme`. Every outbound send, including policy requeues and cascades, goes through the scheme-keyed router.
+- Serialization: `IMessageSerializer` (default `JsonMessageSerializer`, `application/json`) runs only at the transport boundary, through `EnvelopeCodec` (`cabbie-*` headers plus the body; custom headers may not use the `cabbie-` prefix). `local://` skips it. Replace it with `services.AddSingleton<IMessageSerializer, MySerializer>()`.
+- Outcomes: the listener acts on what `IReceiver.ReceiveAsync` returns, only after the executor finished.
+
+| Outcome | Meaning | Transport does |
+|---|---|---|
+| `Ack` | Handled, or the error policy resolved the fault (dead-lettered, discarded, requeued, parked for scheduled retry) | Delete the envelope |
+| `Nack` | Fault the policy did not resolve | Make it available for redelivery |
+| `Defer` | Cancelled before the executor finished (host stopping) | Release it without counting a failure |
+
+- A policy `Requeue` re-sends the envelope to its destination and acks the original. The local transport has no redelivery: a `Nack` is logged and the envelope dropped, as before.
+- Delivery is at-least-once: handlers must be idempotent until the inbox (roadmap item 5).
+- Stays in-process: `InvokeAsync`, tracked sessions, the scheduled hold and outbox staging.
+- Envelope validation no longer restricts destination schemes (it was a closed `local`/`tcp`/`rabbitmq` list); the registered transports decide.
+
 ## Architecture
 
 Cabbie is onion. The kernel does not know about brokers, databases, or HTTP. Adapters reference the kernel; the kernel never references adapters.
@@ -137,7 +176,7 @@ Goal: replace AsyncMonolith in StoreboostServices with Cabbie on AWS SQS/SNS. Do
 
 1. **Handler DI** — constructor injection with a scope per message (fresh scope per retry); discover `Consume` inherited from generic base classes.
 2. **Error policy fixes** — Done: base-type exception matching, a default retry/dead-letter policy, handler timeouts, an awaited dead-letter write. See [Error policies](#error-policies).
-3. **Transport selection** — route by URI scheme (`sqs://`, `sns://`) through a transport registry; unknown schemes fail loudly; a listener port the host starts and stops.
+3. **Transport selection** — Done: endpoints are URIs, the scheme picks the transport through a registry, unknown schemes fail host start, and `ListenTo` listeners are started and stopped by the host. See [Endpoints and transports](#endpoints-and-transports).
 4. **Transport contract suite** — one shared test suite every transport must pass (round trip, duplicates, redelivery, dead-letter), proven first against a serialising loopback transport.
 5. **Handler isolation + inbox** — one failing handler no longer skips the others; redelivery re-runs only the failed handler; the inbox gives per-(envelope, handler) idempotency.
 6. **`Cabbie.Aws`** — SQS send/receive, then SNS fan-out and topology. Tested against LocalStack (Testcontainers).

@@ -5,6 +5,7 @@ using Cabbie.Domain.Envelope;
 using Cabbie.Domain.Envelope.ValueObjects;
 using Cabbie.Domain.Messaging;
 using Cabbie.Domain.Messaging.ValueObjects;
+using Cabbie.Tests.Application.Transports;
 using Cabbie.Tests.Domain;
 using Cabbie.Tests.Domain.Envelope;
 using Microsoft.Extensions.DependencyInjection;
@@ -39,19 +40,19 @@ public sealed class ExecutorErrorPolicyTests
     }
 
     [Fact]
-    public async Task requeue_re_enqueues_via_publish_enqueuer()
+    public async Task requeue_re_sends_the_envelope_to_its_destination()
     {
         Envelope envelope = ChargePaymentEnvelope();
         var policies = new ErrorPolicyCatalog();
         policies.OnException<TimeoutException>().Requeue();
-        var enqueuer = new RecordingEnqueuer();
-        var executor = new Executor(policies, enqueuer: () => enqueuer);
+        var sender = new RecordingSender();
+        var executor = new Executor(policies, sender: () => sender);
 
         object? result = await executor.InvokeAsync(envelope, HandlerFor<TimeoutThrowingHandler>());
 
         // The invocation completes without a fault; the envelope went back to the queue.
         Assert.Null(result);
-        Envelope requeued = Assert.Single(enqueuer.Enqueued);
+        Envelope requeued = Assert.Single(sender.Sent);
         Assert.Equal(envelope.Id, requeued.Id);
         Assert.Equal(envelope.Destination, requeued.Destination);
 
@@ -199,13 +200,6 @@ public sealed class ExecutorErrorPolicyTests
         EnvelopeFactory.Create(
             message: new Message(new ChargePayment(1)),
             messageType: MessageTypeNaming.For(typeof(ChargePayment)));
-
-    private sealed class RecordingEnqueuer : IPublishEnqueuer
-    {
-        public List<Envelope> Enqueued { get; } = [];
-
-        public void Enqueue(Envelope envelope) => Enqueued.Add(envelope);
-    }
 }
 
 /// <summary>

@@ -3,15 +3,13 @@ using FluentValidation;
 
 namespace Cabbie.Domain.Envelope.Validators;
 
+/// <summary>
+/// A destination is a non-null absolute URI. Which schemes are deliverable is not a Domain
+/// rule: the registered transports decide, and an endpoint whose scheme has no transport
+/// fails with <c>UnknownTransportScheme</c> when the host starts.
+/// </summary>
 public sealed class DestinationValidator : AbstractValidator<Destination>
 {
-    private static readonly HashSet<string> AllowedSchemes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "local",
-        "tcp",
-        "rabbitmq"
-    };
-
     public DestinationValidator()
     {
         RuleFor(x => x.Value)
@@ -23,10 +21,6 @@ public sealed class DestinationValidator : AbstractValidator<Destination>
             RuleFor(x => x.Value)
                 .Must(uri => uri.IsAbsoluteUri)
                 .WithMessage("Destination must be an absolute URI.");
-
-            RuleFor(x => x.Value.Scheme)
-                .Must(scheme => AllowedSchemes.Contains(scheme))
-                .WithMessage("Destination scheme must be local, tcp, or rabbitmq.");
         });
     }
 }

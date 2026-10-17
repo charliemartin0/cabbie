@@ -7,6 +7,7 @@ using Cabbie.Application.Routing;
 using Cabbie.Application.Sagas;
 using Cabbie.Application.Scheduling;
 using Cabbie.Application.Tracking;
+using Cabbie.Application.Transports;
 using Cabbie.Domain.Envelope;
 using Cabbie.Domain.Envelope.Validators;
 using Cabbie.Domain.Envelope.ValueObjects;
@@ -34,7 +35,7 @@ public sealed class Mediator : IMessageBus
     private readonly ISagaStore _sagas;
     private readonly MessageScheduler _scheduler;
     private readonly RoutingCatalog _routing;
-    private readonly IPublishEnqueuer _enqueuer;
+    private readonly ISender _sender;
     private readonly Queue<(object Body, Envelope Parent)> _worklist = [];
     private readonly object _trackGate = new();
 
@@ -51,21 +52,21 @@ public sealed class Mediator : IMessageBus
         ISagaStore? sagas = null,
         ErrorPolicyCatalog? policies = null,
         RoutingCatalog? routing = null,
-        IPublishEnqueuer? enqueuer = null,
+        ISender? sender = null,
         IHandlerAttemptObserver? attempts = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         Catalog = catalog;
         _routing = routing ?? new RoutingCatalog();
-        _enqueuer = enqueuer ?? NullEnqueuer.Instance;
+        _sender = sender ?? NullSender.Instance;
         IScheduledEnvelopeHold inner = hold ?? new InMemoryScheduledEnvelopeHold();
         var scheduled = new RecordingScheduledEnvelopeHold(inner, OnPark);
-        _dispatcher = new OutgoingDispatcher(scheduled, cascades, OnImmediate);
+        _dispatcher = new OutgoingDispatcher(scheduled, cascades);
         _executor = executor ?? new Executor(
             policies ?? new ErrorPolicyCatalog(),
             scheduled: scheduled,
             attempts: new SessionAttemptObserver(this),
-            enqueuer: () => _enqueuer);
+            sender: () => _sender);
         if (attempts is AttemptObserverHub hub)
         {
             // The host shares one Executor; bind this session logger so tracked
@@ -79,7 +80,7 @@ public sealed class Mediator : IMessageBus
             _executor,
             hold: scheduled,
             routing: _routing,
-            onImmediate: OnImmediate,
+            onImmediate: OnImmediateAsync,
             cascades: cascades);
         _scheduler = new MessageScheduler(
             scheduled,
@@ -118,8 +119,7 @@ public sealed class Mediator : IMessageBus
             return Task.CompletedTask;
         }
 
-        _enqueuer.Enqueue(EnvelopeForPublish(message, _routing.For(message)));
-        return Task.CompletedTask;
+        return _sender.SendAsync(EnvelopeForPublish(message, _routing.For(message)), cancellationToken).AsTask();
     }
 
     public Task<TrackedSession> InvokeTrackedAsync(
@@ -419,7 +419,8 @@ public sealed class Mediator : IMessageBus
             new Headers(),
             new ContentType(""),
             new Attempts(1),
-            new EnvelopeData());
+            new EnvelopeData(),
+            new CausationId(parent.Id.Value));
     }
 
     private void OnPark(Envelope envelope)
@@ -427,11 +428,11 @@ public sealed class Mediator : IMessageBus
         _log?.Scheduled.Add(new ScheduledRecord(envelope));
     }
 
-    private void OnImmediate(object message, Envelope parent)
+    private async ValueTask OnImmediateAsync(object message, Envelope parent, CancellationToken cancellationToken)
     {
         if (_log is null)
         {
-            _enqueuer.Enqueue(EnvelopeForDescendant(message, parent, _routing.For(message)));
+            await _sender.SendAsync(EnvelopeForDescendant(message, parent, _routing.For(message)), cancellationToken);
             return;
         }
 
@@ -510,14 +511,13 @@ public sealed class Mediator : IMessageBus
 
     /// <summary>
     /// Default when no transport is configured: direct construction in tests still compiles
-    /// and PublishAsync does not throw. The composition root always supplies a real enqueuer.
+    /// and PublishAsync does not throw. The composition root always supplies the transport router.
     /// </summary>
-    private sealed class NullEnqueuer : IPublishEnqueuer
+    private sealed class NullSender : ISender
     {
-        public static readonly NullEnqueuer Instance = new();
+        public static readonly NullSender Instance = new();
 
-        public void Enqueue(Envelope envelope)
-        {
-        }
+        public ValueTask SendAsync(Envelope envelope, CancellationToken cancellationToken = default) =>
+            ValueTask.CompletedTask;
     }
 }
