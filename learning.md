@@ -266,7 +266,7 @@ If Cabbie ever needs the cold-start win, the catalog can be cached to disk and r
 
 The codemap (`codemap.md`, regenerable) records every landed slice with one line of context. Twenty-six slices have landed so far. The slice is the unit of progress, not the commit. Each slice ships with behaviour tests that cover its prove-with list, written alongside or after the code.
 
-Per project rules: branch from `origin/main`, PR to `main`, never a stacked PR. The codemap is updated in the slice commit, not in a follow-up.
+Per project rules: one intent per PR, in Graphite draft stacks; a slice is done only when it is on `origin/main`. The codemap is updated in the slice commit, not in a follow-up.
 
 </details>
 
@@ -279,7 +279,7 @@ Per project rules: branch from `origin/main`, PR to `main`, never a stacked PR. 
 2. Implement the smallest type that does the job. Onion rules: Domain does not import Application; Application does not import Infrastructure; `src/Cabbie` does not ProjectReference any adapter.
 3. Add xUnit facts in `tests/Cabbie.Tests/<Folder>/` that cover the prove-with behaviours, alongside or after the code: snake_case names that describe behaviour, small fakes, assertions on outcomes rather than internals.
 4. Update the codemap with the new slice.
-5. Branch from `origin/main`, PR to `main`. No stacked PRs.
+5. Open it as a Graphite draft PR (`gt create`, then `gt submit --stack --draft`), one intent per PR. See `AGENTS.md`.
 
 If the feature crosses an adapter boundary (Postgres, Rabbit, HTTP), the new code goes in the adapter project, not the kernel.
 
