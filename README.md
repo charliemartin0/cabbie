@@ -1,10 +1,9 @@
 # Hansom
 
-A Wolverine-shaped in-process bus for .NET. Onion-architecture kernel, in-memory defaults, broker adapters in sibling projects. The shape is borrowed from Wolverine; the catalog is not cloned.
+Hansom takes its name from the Victorian London cab — small, quiet, and built to slip through heavy traffic. It is a Wolverine-shaped in-process message bus for .NET. Most .NET apps that need messaging end up choosing between two extremes: a thin MediatR with no opinion about retries, scheduling, or persistence, and a full MassTransit / NServiceBus / Wolverine stack that ships every transport, codegen, and integration at once. Hansom is the middle path. It borrows Wolverine's handler shape — catalog, in-process `Invoke`/`Publish`, cascading messages, envelope-based execution — and stops at the kernel. Broker adapters are separate packages. The onion architecture is enforced. Every slice ships with prove-with tests.
 
 ## Table of Contents
 
-- [About](#about)
 - [Features](#features)
 - [Quickstart](#quickstart)
 - [Architecture](#architecture)
@@ -14,10 +13,6 @@ A Wolverine-shaped in-process bus for .NET. Onion-architecture kernel, in-memory
 - [Contributing](#contributing)
 - [Author](#author)
 - [License](#license)
-
-## About
-
-Most .NET apps that need messaging end up choosing between two extremes. A thin MediatR that has no opinion about retries, scheduling, or persistence — and a full MassTransit / NServiceBus / Wolverine stack that ships every transport, codegen, and integration at once. Hansom is the middle path. It borrows the *shape* of Wolverine — handler catalog, in-process `Invoke`/`Publish`, cascading messages, envelope-based execution — and stops at the kernel. Broker adapters are separate packages. The onion architecture is enforced. Every slice ships with prove-with tests.
 
 ## Features
 
