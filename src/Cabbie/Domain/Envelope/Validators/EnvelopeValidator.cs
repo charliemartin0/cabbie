@@ -1,6 +1,6 @@
-using FluentValidation;
 using Cabbie.Domain.Messaging.Validators;
 using Cabbie.Domain.Sagas.Validators;
+using FluentValidation;
 
 namespace Cabbie.Domain.Envelope.Validators;
 

@@ -1,8 +1,8 @@
 using Cabbie.Application.Bus;
-using Cabbie.Tests.FactoryHandlers;
 using Cabbie.Application.Discovery;
 using Cabbie.Application.Execution;
 using Cabbie.Tests.Application.Execution;
+using Cabbie.Tests.FactoryHandlers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 

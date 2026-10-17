@@ -1,5 +1,5 @@
-using FluentValidation;
 using Cabbie.Domain.Messaging.Validators;
+using FluentValidation;
 
 namespace Cabbie.Application.Discovery.Validators;
 

@@ -1,10 +1,10 @@
+using Cabbie;
+using Cabbie.Application.Bus;
 using Helpdesk.Application.Sagas;
 using Helpdesk.Domain;
 using Helpdesk.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Cabbie;
-using Cabbie.Application.Bus;
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddHelpdesk();

@@ -1,14 +1,14 @@
+using Cabbie;
+using Cabbie.Application.Bus;
+using Cabbie.Application.Sagas;
+using Cabbie.Application.Tracking;
+using Cabbie.Domain.Sagas.ValueObjects;
 using Helpdesk.Application.Receipts;
 using Helpdesk.Application.Sagas;
 using Helpdesk.Domain;
 using Helpdesk.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Cabbie;
-using Cabbie.Application.Bus;
-using Cabbie.Application.Sagas;
-using Cabbie.Application.Tracking;
-using Cabbie.Domain.Sagas.ValueObjects;
 
 namespace Helpdesk.Tests.Application;
 

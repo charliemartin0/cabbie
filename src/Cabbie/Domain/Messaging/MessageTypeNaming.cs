@@ -12,7 +12,7 @@ public static class MessageTypeNaming
     public static MessageType For(Type type)
     {
         ArgumentNullException.ThrowIfNull(type);
-        MessageIdentityAttribute? identityAttribute = type.GetCustomAttribute<MessageIdentityAttribute>(inherit:false);
+        MessageIdentityAttribute? identityAttribute = type.GetCustomAttribute<MessageIdentityAttribute>(inherit: false);
         if (identityAttribute != null)
         {
             return new MessageType(identityAttribute.Alias);

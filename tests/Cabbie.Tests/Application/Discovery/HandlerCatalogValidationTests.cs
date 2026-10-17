@@ -1,6 +1,6 @@
+using Cabbie.Tests.InvalidCatalog;
 using FluentValidation;
 using Microsoft.Extensions.Hosting;
-using Cabbie.Tests.InvalidCatalog;
 
 namespace Cabbie.Tests.Application.Discovery;
 

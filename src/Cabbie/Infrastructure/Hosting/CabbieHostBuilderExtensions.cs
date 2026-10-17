@@ -1,7 +1,4 @@
 using System.Reflection;
-using FluentValidation;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Cabbie.Application.Bus;
 using Cabbie.Application.Discovery;
 using Cabbie.Application.Discovery.Validators;
@@ -23,6 +20,9 @@ using Cabbie.Infrastructure.Sagas;
 using Cabbie.Infrastructure.Scheduling;
 using Cabbie.Infrastructure.Serialization;
 using Cabbie.Infrastructure.Transports;
+using FluentValidation;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Cabbie;
 

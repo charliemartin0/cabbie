@@ -1,9 +1,9 @@
-using FluentValidation.TestHelper;
 using Cabbie.Domain.Envelope.Validators;
 using Cabbie.Domain.Envelope.ValueObjects;
 using Cabbie.Domain.Messaging.ValueObjects;
 using Cabbie.Domain.Sagas;
 using Cabbie.Domain.Sagas.ValueObjects;
+using FluentValidation.TestHelper;
 
 namespace Cabbie.Tests.Domain.Envelope;
 
