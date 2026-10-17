@@ -9,9 +9,9 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Cabbie.Tests.Application.Execution;
 
 /// <summary>
-/// Prove-with for handler DI: constructor and method-parameter services resolve from one
-/// scope per Executor.InvokeAsync, the scope is disposed on every exit, and a missing
-/// service is reported with the handler and the service type.
+/// Prove-with for handler DI: constructor and method-parameter services resolve from a fresh
+/// scope per handler attempt, the scope is disposed on every exit, and a missing service is
+/// reported with the handler, the parameter and the service type.
 /// </summary>
 public sealed class ExecutorDependencyInjectionTests
 {
@@ -158,6 +158,102 @@ public sealed class ExecutorDependencyInjectionTests
         Assert.Contains("'service'", missing.Message);
     }
 
+    [Fact]
+    public async Task scoped_dependency_is_a_new_instance_on_each_retry()
+    {
+        var sink = new DiSink();
+        await using ServiceProvider provider = Build(services =>
+        {
+            services.AddSingleton(sink);
+            services.AddScoped<ScopedCounter>();
+        });
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<TimeoutException>().Retry().Retry().Then.MoveToErrorQueue();
+        Executor executor = ExecutorFor(provider, policies);
+
+        await executor.InvokeAsync(MakeEnvelope(new RetryScopeMessage()), Scan<RetryScopeHandler>());
+
+        Assert.Equal(3, sink.Seen.Count);
+        Assert.Equal(3, sink.Seen.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task constructor_that_throws_invalid_operation_surfaces_as_itself()
+    {
+        var sink = new DiSink();
+        await using ServiceProvider provider = Build(services => services.AddSingleton(sink));
+        Executor executor = ExecutorFor(provider);
+
+        HandlerFault fault = await Assert.ThrowsAsync<HandlerFault>(() =>
+            executor.InvokeAsync(MakeEnvelope(new ThrowingCtorMessage()), Scan<ThrowingCtorHandler>()));
+
+        InvalidOperationException inner = Assert.IsType<InvalidOperationException>(fault.InnerException);
+        Assert.Equal("constructor failed on purpose", inner.Message);
+    }
+
+    [Fact]
+    public async Task missing_dependency_is_not_retried()
+    {
+        await using ServiceProvider provider = Build(_ => { });
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<InvalidOperationException>().Retry().Retry().Then.MoveToErrorQueue();
+        var attempts = new CountingAttemptObserver();
+        Executor executor = ExecutorFor(provider, policies, attempts);
+
+        HandlerFault fault = await Assert.ThrowsAsync<HandlerFault>(() =>
+            executor.InvokeAsync(MakeEnvelope(new NeedsCtorServiceMessage()), Scan<NeedsCtorServiceHandler>()));
+
+        Assert.IsType<HandlerDependencyMissing>(fault.InnerException);
+        Assert.Equal(1, attempts.Attempts);
+    }
+
+    [Fact]
+    public async Task scope_is_disposed_when_the_handler_is_cancelled()
+    {
+        var sink = new DiSink();
+        var signal = new HandlerSignal();
+        await using ServiceProvider provider = Build(services =>
+        {
+            services.AddSingleton(sink);
+            services.AddSingleton(signal);
+            services.AddScoped<DisposableProbe>();
+        });
+        Executor executor = ExecutorFor(provider);
+        using var cancellation = new CancellationTokenSource();
+        Task<object?> invocation = executor.InvokeAsync(
+            MakeEnvelope(new WaitsForCancellationMessage()),
+            Scan<WaitsForCancellationHandler>(),
+            cancellation.Token);
+        await signal.Started.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => invocation);
+        Assert.Equal([true], sink.Flags);
+    }
+
+    [Fact]
+    public async Task concurrent_handlers_keep_separate_scopes()
+    {
+        var sink = new DiSink();
+        await using ServiceProvider provider = Build(services =>
+        {
+            services.AddSingleton(sink);
+            services.AddSingleton(new ArrivalGate(parties: 2));
+            services.AddScoped<ScopedCounter>();
+        });
+        Executor executor = ExecutorFor(provider);
+        DiscoveredHandler handler = Scan<ConcurrentHandler>();
+
+        // The gate opens only when both handlers are running at once, so the scopes overlap.
+        await Task.WhenAll(
+            executor.InvokeAsync(MakeEnvelope(new ConcurrentMessage()), handler),
+            executor.InvokeAsync(MakeEnvelope(new ConcurrentMessage()), handler))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, sink.Seen.Distinct().Count());
+    }
+
     private static ServiceProvider Build(Action<IServiceCollection> register)
     {
         var services = new ServiceCollection();
@@ -165,8 +261,14 @@ public sealed class ExecutorDependencyInjectionTests
         return services.BuildServiceProvider(validateScopes: true);
     }
 
-    private static Executor ExecutorFor(ServiceProvider provider) =>
-        new(new ErrorPolicyCatalog(), scopes: provider.GetRequiredService<IServiceScopeFactory>());
+    private static Executor ExecutorFor(
+        ServiceProvider provider,
+        ErrorPolicyCatalog? policies = null,
+        IHandlerAttemptObserver? attempts = null) =>
+        new(
+            policies ?? new ErrorPolicyCatalog(),
+            attempts: attempts,
+            scopes: provider.GetRequiredService<IServiceScopeFactory>());
 
     private static DiscoveredHandler Scan<THandler>()
     {
@@ -290,4 +392,92 @@ public sealed record RegisteredOnlyMessage;
 public sealed class RegisteredOnlyHandler(string origin)
 {
     public string Handle(RegisteredOnlyMessage message) => origin;
+}
+
+public sealed record RetryScopeMessage;
+
+public sealed class RetryScopeHandler(DiSink sink, ScopedCounter counter)
+{
+    public void Handle(RetryScopeMessage message, Envelope envelope)
+    {
+        sink.Seen.Add(counter.Id);
+        if (envelope.Attempts.Value < 3)
+        {
+            throw new TimeoutException("transient");
+        }
+    }
+}
+
+public sealed record ThrowingCtorMessage;
+
+public sealed class ThrowingCtorHandler
+{
+    public ThrowingCtorHandler(DiSink sink) =>
+        throw new InvalidOperationException("constructor failed on purpose");
+
+    public void Handle(ThrowingCtorMessage message)
+    {
+    }
+}
+
+public sealed class CountingAttemptObserver : IHandlerAttemptObserver
+{
+    public int Attempts { get; private set; }
+
+    public void OnAttempt(Envelope envelope, DiscoveredHandler handler, Exception? exception) => Attempts++;
+}
+
+public sealed class HandlerSignal
+{
+    private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Started => _started.Task;
+
+    public void MarkStarted() => _started.TrySetResult();
+}
+
+public sealed record WaitsForCancellationMessage;
+
+public sealed class WaitsForCancellationHandler(DisposableProbe probe, HandlerSignal signal)
+{
+    public async Task Handle(WaitsForCancellationMessage message, CancellationToken cancellationToken)
+    {
+        _ = probe;
+        signal.MarkStarted();
+        await Task.Delay(Timeout.Infinite, cancellationToken);
+    }
+}
+
+/// <summary>
+/// Completes only once <c>parties</c> handlers are inside it at the same time.
+/// </summary>
+public sealed class ArrivalGate(int parties)
+{
+    private readonly TaskCompletionSource _all = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _arrived;
+
+    public Task ArriveAsync()
+    {
+        if (Interlocked.Increment(ref _arrived) == parties)
+        {
+            _all.TrySetResult();
+        }
+
+        return _all.Task;
+    }
+}
+
+public sealed record ConcurrentMessage;
+
+public sealed class ConcurrentHandler(DiSink sink, ScopedCounter counter, ArrivalGate gate)
+{
+    public async Task Handle(ConcurrentMessage message)
+    {
+        lock (sink.Seen)
+        {
+            sink.Seen.Add(counter.Id);
+        }
+
+        await gate.ArriveAsync();
+    }
 }

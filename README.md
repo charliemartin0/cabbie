@@ -61,11 +61,12 @@ public sealed class SendOrderReceiptHandler(IReceiptSender sender)
 }
 ```
 
-- One `AsyncServiceScope` per handler invocation. It is disposed on success, failure, or cancellation, and shared by every retry attempt of that invocation. Fan-out handlers each get their own scope.
-- `AddCabbie` scans `HandlerAssemblies` and registers instance handlers as scoped. Handlers that were never registered (scanned later, or built by tests) are created with `ActivatorUtilities`.
+- One `AsyncServiceScope` per handler invocation attempt: the handler and its method services come from that scope, which is disposed on success, failure, or cancellation. A retry gets a fresh scope and a new handler instance, so a poisoned scoped service (an EF `DbContext`, say) never leaks into the next attempt. Fan-out handlers and concurrent messages each get their own scope.
+- `AddCabbie` scans `HandlerAssemblies` and registers instance handlers as scoped. Handlers that were never registered (scanned later, or built by tests) are created with `ActivatorUtilities`, with the factory cached per type.
 - `Envelope` and `CancellationToken` parameters are filled by Cabbie; `out`, `ref`, and `params` parameters are rejected when Cabbie is added.
-- Sagas: saga state is not constructed by the container. Use method parameters for services.
-- A missing service surfaces as `HandlerFault` wrapping `HandlerDependencyMissing`, which names the handler and the service type.
+- Startup check: before queues start, every handler method parameter, and every constructor parameter of a handler Cabbie builds from the container, must be a service the container knows. A gap fails host start with `HandlerDependencyMissing` naming the handler, parameter and service type. Handlers you registered yourself (for example through a factory) have their constructors left alone.
+- Sagas: saga state is created and loaded by Cabbie, never resolved from the container. A saga needs a public parameterless constructor (checked at scan); take services as handler method parameters.
+- A missing service found at runtime surfaces as `HandlerFault` wrapping `HandlerDependencyMissing`. It is not retried, since another attempt cannot succeed. Any other constructor exception propagates unchanged.
 
 ## Architecture
 

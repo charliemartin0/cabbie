@@ -141,6 +141,19 @@ public sealed class HandlerCatalogTests
     }
 
     [Fact]
+    public void scan_rejects_a_saga_without_a_parameterless_constructor()
+    {
+        var catalog = new HandlerCatalog();
+
+        InvalidHandlerSignature error = Assert.Throws<InvalidHandlerSignature>(
+            () => catalog.Scan(typeof(SagaWithConstructorArguments)));
+
+        Assert.Equal(typeof(SagaWithConstructorArguments), error.HandlerType);
+        Assert.Contains("parameterless constructor", error.Message);
+        Assert.Empty(catalog.Handlers);
+    }
+
+    [Fact]
     public void scan_assembly_lists_message_type_to_handler_methods()
     {
         var catalog = new HandlerCatalog();

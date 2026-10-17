@@ -74,16 +74,13 @@ public sealed class Executor
         InvocationKind kind,
         CancellationToken cancellationToken)
     {
-        // One scope per handler invocation: spans outer middleware and every retry attempt,
-        // and is disposed on success, fault and cancellation alike.
-        await using AsyncServiceScope scope = _scopes.CreateAsyncScope();
         try
         {
             return await _middleware.InvokeAsync(
                 MiddlewareLayer.Outer,
                 envelope,
                 handler,
-                () => InvokeWithRetries(envelope, handler, scope.ServiceProvider, cancellationToken, kind),
+                () => InvokeWithRetries(envelope, handler, cancellationToken, kind),
                 cancellationToken);
         }
         catch (Exception exception) when (
@@ -101,7 +98,6 @@ public sealed class Executor
     private async Task<object?> InvokeWithRetries(
         Envelope envelope,
         DiscoveredHandler handler,
-        IServiceProvider services,
         CancellationToken cancellationToken,
         InvocationKind kind)
     {
@@ -115,7 +111,7 @@ public sealed class Executor
                     MiddlewareLayer.Inner,
                     current,
                     handler,
-                    () => InvokeOnce(current, handler, services, cancellationToken),
+                    () => InvokeOnce(current, handler, cancellationToken),
                     cancellationToken);
                 _attempts?.OnAttempt(current, handler, exception: null);
                 return result;
@@ -134,6 +130,12 @@ public sealed class Executor
                 }
 
                 _attempts?.OnAttempt(current, handler, fault);
+                if (fault is HandlerDependencyMissing)
+                {
+                    // A missing registration is a configuration error: another attempt cannot succeed.
+                    throw new HandlerFault(fault);
+                }
+
                 Envelope? next = await NextAttempt(current, handler, fault, cancellationToken, kind);
                 if (next is null)
                 {
@@ -230,12 +232,18 @@ public sealed class Executor
     private static Envelope WithNextAttempt(Envelope current) =>
         current with { Attempts = new Attempts(current.Attempts.Value + 1) };
 
-    private static async Task<object?> InvokeOnce(
+    /// <summary>
+    /// One attempt: a fresh scope (disposed on success, fault and cancellation) from which the
+    /// handler and its method services are resolved, so a retry never inherits state from the
+    /// attempt before it.
+    /// </summary>
+    private async Task<object?> InvokeOnce(
         Envelope envelope,
         DiscoveredHandler handler,
-        IServiceProvider services,
         CancellationToken cancellationToken)
     {
+        await using AsyncServiceScope scope = _scopes.CreateAsyncScope();
+        IServiceProvider services = scope.ServiceProvider;
         object? target = handler.IsStatic ? null : HandlerServices.CreateTarget(services, handler);
         object? result = handler.CachedInvoker is { } invoker
             ? invoker(target, envelope.Message.Value, envelope, cancellationToken, services)

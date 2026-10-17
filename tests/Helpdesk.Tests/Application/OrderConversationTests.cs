@@ -1,6 +1,7 @@
 using Helpdesk.Application.Receipts;
 using Helpdesk.Application.Sagas;
 using Helpdesk.Domain;
+using Helpdesk.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Cabbie;
@@ -96,6 +97,7 @@ public sealed class OrderConversationTests
     private static async Task<IHost> StartedHostAsync()
     {
         var builder = Host.CreateApplicationBuilder();
+        builder.Services.AddHelpdesk();
         builder.UseCabbie(options =>
         {
             options.HandlerAssemblies.Add(typeof(PlaceOrder).Assembly);

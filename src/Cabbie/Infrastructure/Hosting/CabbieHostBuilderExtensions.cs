@@ -1,7 +1,6 @@
 using System.Reflection;
 using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Cabbie.Application.Bus;
 using Cabbie.Application.Discovery;
@@ -61,13 +60,18 @@ public static class CabbieHostBuilderExtensions
             scanned.Scan(assembly);
         }
 
+        var registered = new HashSet<Type>();
         foreach (Type handlerType in scanned.Handlers
             .Where(handler => !handler.IsStatic)
             .Select(handler => handler.HandlerType)
             .Where(type => !type.IsAbstract && !type.IsAssignableTo(typeof(Saga)))
             .Distinct())
         {
-            services.TryAddScoped(handlerType);
+            if (!services.Any(descriptor => descriptor.ServiceType == handlerType))
+            {
+                services.AddScoped(handlerType);
+                registered.Add(handlerType);
+            }
         }
 
         services.AddSingleton<HandlerCatalog>(_ =>
@@ -137,6 +141,8 @@ public static class CabbieHostBuilderExtensions
             enqueuer: services.GetRequiredService<IPublishEnqueuer>(),
             attempts: services.GetRequiredService<IHandlerAttemptObserver>()));
         services.AddSingleton<IMessageBus>(services => services.GetRequiredService<Mediator>());
+        services.AddSingleton(new CabbieHandlerRegistrations(registered));
+        services.AddSingleton<IHostedService, HandlerDependencyStartupCheck>();
         services.AddSingleton<CabbieHostedService>();
         services.AddSingleton<IHostedService>(
             services => services.GetRequiredService<CabbieHostedService>());

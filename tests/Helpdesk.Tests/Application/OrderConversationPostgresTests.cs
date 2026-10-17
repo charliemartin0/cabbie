@@ -96,6 +96,7 @@ public sealed class OrderConversationPostgresTests : IClassFixture<PostgresConta
     private async Task<IHost> StartedHostAsync()
     {
         var builder = Host.CreateApplicationBuilder();
+        builder.Services.AddHelpdesk();
         builder.UseCabbie(options =>
         {
             options.HandlerAssemblies.Add(typeof(PlaceOrder).Assembly);
