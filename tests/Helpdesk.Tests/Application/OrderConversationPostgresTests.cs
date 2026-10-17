@@ -4,17 +4,17 @@ using Helpdesk.Infrastructure;
 using Helpdesk.Tests.Postgres;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Hansom;
-using Hansom.Application.Bus;
-using Hansom.Application.Sagas;
-using Hansom.Application.Tracking;
-using Hansom.Domain.Sagas.ValueObjects;
+using Cabbie;
+using Cabbie.Application.Bus;
+using Cabbie.Application.Sagas;
+using Cabbie.Application.Tracking;
+using Cabbie.Domain.Sagas.ValueObjects;
 
 namespace Helpdesk.Tests.Application;
 
 /// <summary>
 /// Prove-with for the Helpdesk Postgres wiring: the same three conversation facts as
-/// <see cref="OrderConversationTests"/>, but the host is built with <c>UseHansom</c> +
+/// <see cref="OrderConversationTests"/>, but the host is built with <c>UseCabbie</c> +
 /// <c>UseHelpdeskPostgres</c> so saga, inbox, outbox, and dead-letter state round-trips
 /// through a real Postgres container.
 /// </summary>
@@ -96,7 +96,7 @@ public sealed class OrderConversationPostgresTests : IClassFixture<PostgresConta
     private async Task<IHost> StartedHostAsync()
     {
         var builder = Host.CreateApplicationBuilder();
-        builder.UseHansom(options =>
+        builder.UseCabbie(options =>
         {
             options.HandlerAssemblies.Add(typeof(PlaceOrder).Assembly);
             options.HandlerAssemblies.Add(typeof(OrderSaga).Assembly);

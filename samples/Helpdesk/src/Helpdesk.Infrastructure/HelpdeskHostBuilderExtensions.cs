@@ -1,13 +1,13 @@
 namespace Helpdesk.Infrastructure;
 
-using Hansom.Postgresql;
+using Cabbie.Postgresql;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
 
 /// <summary>
 /// Helpdesk composition root helper: wires the durable Postgres backend.
-/// Call AFTER <c>UseHansom</c>. Reads the connection string from
-/// <c>HANSOM_PG_CONNECTIONSTRING</c> at the Program.cs level; the data
+/// Call AFTER <c>UseCabbie</c>. Reads the connection string from
+/// <c>CABBIE_PG_CONNECTIONSTRING</c> at the Program.cs level; the data
 /// source is built here so the same instance drives both
 /// <c>PostgresSchema.EnsureAllAsync</c> and the Postgres stores.
 /// <para>

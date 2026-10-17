@@ -27,7 +27,7 @@ public async Task exhausted_retries_move_the_envelope_to_the_error_queue_and_thr
 
 ## Tests
 
-- Mirror production folders: `tests/Hansom.Tests/Application/Execution/ExecutorTests.cs`.
+- Mirror production folders: `tests/Cabbie.Tests/Application/Execution/ExecutorTests.cs`.
 - Fact names are snake_case behavior sentences, not `Test1` or `InvokeAsync_Works`.
 - Cover success, exhaustion/failure, and the Plan’s negative prove-with (throwing handler publishes nothing; missing policy does not retry).
 - Use small fakes (`RecordingErrorQueue`), not a container or a live broker.

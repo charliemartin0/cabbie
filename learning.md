@@ -1,8 +1,8 @@
-# Learning Hansom
+# Learning Cabbie
 
-A guided tour through event-driven architecture, using Hansom as the working example. Each section asks a question, answers it briefly, and shows the smallest piece of Hansom code that proves it. Read top-to-bottom, or jump by topic.
+A guided tour through event-driven architecture, using Cabbie as the working example. Each section asks a question, answers it briefly, and shows the smallest piece of Cabbie code that proves it. Read top-to-bottom, or jump by topic.
 
-If you want a *product* overview — what Hansom is, what's done, what's next — see the [README](README.md).
+If you want a *product* overview — what Cabbie is, what's done, what's next — see the [README](README.md).
 
 Open an answer only after you have a guess. If you can explain it to a rubber duck without opening the answer, you have the idea. If you already know **MediatR**, **clean architecture**, and **DDD**, several questions are a translation into this codebase. Frontend stack is out of scope here.
 
@@ -11,7 +11,7 @@ Open an answer only after you have a guess. If you can explain it to a rubber du
 <details>
 <summary>What is a message in this project, versus a method call?</summary>
 
-A message is a piece of data (a `record` such as `PlaceOrder`) that *might* be handled later, on another thread, after a retry, or after a process restart. Hansom wraps that body in `Message` (`src/Hansom/Domain/Messaging/ValueObjects/Message.cs`): the CLR object, not JSON.
+A message is a piece of data (a `record` such as `PlaceOrder`) that *might* be handled later, on another thread, after a retry, or after a process restart. Cabbie wraps that body in `Message` (`src/Cabbie/Domain/Messaging/ValueObjects/Message.cs`): the CLR object, not JSON.
 
 A method call is "run this now, on my stack, throw if it fails." If `OrderSaga.Start` called `ChargePaymentHandler.Handle(...)` directly, you would skip the queue, the retry policy, the inbox, and the chance to load saga state again. Event-driven code decides *what happened* (or what should happen next) and emits a message. It does not reach into the next step.
 
@@ -20,11 +20,11 @@ A method call is "run this now, on my stack, throw if it fails." If `OrderSaga.S
 <details>
 <summary>What is an Envelope, and why isn't the record enough?</summary>
 
-Your `record` is the body. Hansom's unit of work is `Envelope`: body plus `EnvelopeId`, `MessageType`, `Destination`, correlation / conversation / saga ids, `SentAt`, `DeliverBy`, `Headers`, `ContentType`, `Attempts`, and `EnvelopeData` (bytes, empty until Serialization).
+Your `record` is the body. Cabbie's unit of work is `Envelope`: body plus `EnvelopeId`, `MessageType`, `Destination`, correlation / conversation / saga ids, `SentAt`, `DeliverBy`, `Headers`, `ContentType`, `Attempts`, and `EnvelopeData` (bytes, empty until Serialization).
 
 Retries will reuse the **same** envelope (`Attempts` 1, then 2, then 3). They are not three new publishes. Conversation ids are why a future `TrackActivity` can wait for `PlaceOrder` + `ChargePayment` + `PaymentCharged` as one conversation. The inbox stores envelopes, not bare records, so a restart can continue the same attempt count.
 
-See `src/Hansom/Domain/Envelope/Envelope.cs`.
+See `src/Cabbie/Domain/Envelope/Envelope.cs`.
 
 </details>
 
@@ -81,20 +81,20 @@ Both end up in Execution (envelope, handler, error policy, cascades). They diffe
 
 Rule of thumb: **Invoke = I need this handler done before I continue. Publish = I need this work to happen, not necessarily here or now.**
 
-`IMessageBus` does not own threads or sockets. `Mediator` (Invoke) and `LocalQueues` (Publish) implement the difference. See `src/Hansom/Application/Bus/IMessageBus.cs` and `Application/Mediator/Mediator.cs`.
+`IMessageBus` does not own threads or sockets. `Mediator` (Invoke) and `LocalQueues` (Publish) implement the difference. See `src/Cabbie/Application/Bus/IMessageBus.cs` and `Application/Mediator/Mediator.cs`.
 
 </details>
 
 <details>
 <summary>How does this compare to MediatR?</summary>
 
-**`InvokeAsync` is MediatR's `Send`.** One message in, handler runs now, caller waits. Hansom finds `Handle(PlaceOrder)` by convention (`Application/Discovery/HandlerConvention`) instead of `IRequestHandler<PlaceOrder>`.
+**`InvokeAsync` is MediatR's `Send`.** One message in, handler runs now, caller waits. Cabbie finds `Handle(PlaceOrder)` by convention (`Application/Discovery/HandlerConvention`) instead of `IRequestHandler<PlaceOrder>`.
 
 **`PublishAsync` is not MediatR.** The work can retry, land on another thread, or survive a restart. MediatR `INotification` is still not a queue, an outbox, or a saga.
 
 The trap is to `InvokeAsync` the next step from inside a handler (`IMediator.Send` the next command). That keeps you on one stack, with stale saga state, and no outbox. Return `ChargePayment` and let the bus load `OrderSaga` again.
 
-| You know | In Hansom |
+| You know | In Cabbie |
 | --- | --- |
 | `IMediator.Send` / `IRequestHandler<T>` | `InvokeAsync` |
 | `IMediator.Publish` / `INotification` | still in-process; not a durable queue |
@@ -106,7 +106,7 @@ The trap is to `InvokeAsync` the next step from inside a handler (`IMediator.Sen
 <details>
 <summary>How do handlers get discovered?</summary>
 
-`HandlerConvention` (`src/Hansom/Application/Discovery/HandlerConvention.cs`) walks the assemblies you opt into via `HansomOptions.HandlerAssemblies`. It looks for methods named `Handle`, `HandleAsync`, `Start`, or `Consume` on a class and registers each as a candidate handler for the message type the parameter declares. The catalog (`HandlerCatalog`) is a `Type → handlers[]` map the runtime hits on every envelope.
+`HandlerConvention` (`src/Cabbie/Application/Discovery/HandlerConvention.cs`) walks the assemblies you opt into via `CabbieOptions.HandlerAssemblies`. It looks for methods named `Handle`, `HandleAsync`, `Start`, or `Consume` on a class and registers each as a candidate handler for the message type the parameter declares. The catalog (`HandlerCatalog`) is a `Type → handlers[]` map the runtime hits on every envelope.
 
 This is reflection at startup, not on the hot path. Perf #1 cached the invoker so the per-call cost is one delegate dispatch.
 
@@ -141,7 +141,7 @@ Execution (`Application/Execution/Executor.cs`) wraps one handler call: attempts
 
 A `for` loop inside the handler would block one worker, mix "call the gateway" with "how we recover," and skip dead-letter as a first-class outcome. The policy lives on the chain so every `ChargePayment` gets the same recovery, including inbox recovery after a restart.
 
-The same `Envelope` comes back with `Attempts` 1, 2, 3; then error-queue if the policy says so. See `ErrorPolicyCatalog` in `src/Hansom/Application/Execution/`.
+The same `Envelope` comes back with `Attempts` 1, 2, 3; then error-queue if the policy says so. See `ErrorPolicyCatalog` in `src/Cabbie/Application/Execution/`.
 
 </details>
 
@@ -150,7 +150,7 @@ The same `Envelope` comes back with `Attempts` 1, 2, 3; then error-queue if the 
 
 A dead-letter is the final resting place for a message whose handler has failed permanently. The executor publishes to `IErrorQueue` on exhausted retries. The error queue writes to `IDeadLetterStore` (an inbox/outbox port), so the row can be inspected, replayed, or discarded.
 
-In-memory today (`Infrastructure/Persistence/DeadLetterQueueAdapter.cs`); durable in the PostgreSQL adapter. Ports in `src/Hansom/Application/Persistence/`.
+In-memory today (`Infrastructure/Persistence/DeadLetterQueueAdapter.cs`); durable in the PostgreSQL adapter. Ports in `src/Cabbie/Application/Persistence/`.
 
 </details>
 
@@ -187,7 +187,7 @@ Sample code in `samples/Helpdesk/src/Helpdesk.Application/OrderSaga.cs`.
 <details>
 <summary>Why is timeout an attribute, not TimeoutMessage or Task.Delay?</summary>
 
-Wolverine uses `OrderTimeout : TimeoutMessage(1.Minutes())`. Attribute arguments cannot be `TimeSpan`, so Hansom uses `[Timeout(Minutes = 1)]` on the message type: integers, then `Delay` as `TimeSpan`.
+Wolverine uses `OrderTimeout : TimeoutMessage(1.Minutes())`. Attribute arguments cannot be `TimeSpan`, so Cabbie uses `[Timeout(Minutes = 1)]` on the message type: integers, then `Delay` as `TimeSpan`.
 
 The saga class is inert state (`MarkCompleted` / `IsCompleted`). It does not run a timer. Scheduling sets `Envelope.DeliverBy` from `SentAt + Delay` and parks the envelope until `IMessageScheduler.PlayDue(asOf)`. Tests call `PlayDue` to fast-forward without `Task.Delay`.
 
@@ -220,7 +220,7 @@ That is normal in EDA: you design for messages that show up late, twice, or afte
 <details>
 <summary>Why does Saga have no Id? Why is MarkCompleted only a flag?</summary>
 
-`OrderSaga` declares `public int? Id { get; set; }`. Other sagas use `Guid` or `string`. An `Id` on the Hansom base would force one CLR type on every saga.
+`OrderSaga` declares `public int? Id { get; set; }`. Other sagas use `Guid` or `string`. An `Id` on the Cabbie base would force one CLR type on every saga.
 
 `MarkCompleted()` sets `IsCompleted`. It does not delete a Marten document. Application/Sagas treats the flag as "this instance is finished" (later Handle messages are a unified miss). Persistence owns the durable row. Domain/Sagas is data.
 
@@ -231,13 +231,13 @@ That is normal in EDA: you design for messages that show up late, twice, or afte
 <details>
 <summary>How does this sit with clean architecture (onion) and DDD?</summary>
 
-Inner layers do not depend on outer ones. Domain does not know HTTP or Postgres. Application orchestrates. Infrastructure implements ports. Adapters (`Hansom.Postgresql`, `.RabbitMQ`, `.Http`) are separate projects so core cannot take those package references.
+Inner layers do not depend on outer ones. Domain does not know HTTP or Postgres. Application orchestrates. Infrastructure implements ports. Adapters (`Cabbie.Postgresql`, `.RabbitMQ`, `.Http`) are separate projects so core cannot take those package references.
 
 - **Messages** are the language of the domain. They are not a controller DTO and not a SQL row.
 - **Handlers / saga methods** are use cases. `OrderSaga.Start` must not new up `ChargePaymentHandler`.
-- **Helpdesk.Host** is the composition root. Helpdesk.Domain must not reference Hansom.
+- **Helpdesk.Host** is the composition root. Helpdesk.Domain must not reference Cabbie.
 
-A **saga is a process manager**, not an aggregate. Hansom's `Saga` does not enforce "an order's line items." It tracks "this instance is open until something calls `MarkCompleted`." The timeout is a message in time, not a `DateTime` field you poll.
+A **saga is a process manager**, not an aggregate. Cabbie's `Saga` does not enforce "an order's line items." It tracks "this instance is open until something calls `MarkCompleted`." The timeout is a message in time, not a `DateTime` field you poll.
 
 This repo is not a full domain model with repositories. The lesson is the messaging shape that DDD + onion usually want, plus a bus you own one folder at a time.
 
@@ -255,9 +255,9 @@ The empty `sealed class` exists so the folder is a compilable C# project, not a 
 <details>
 <summary>Why no source generation?</summary>
 
-Wolverine's biggest lever is its source generator — it emits handler code at compile time. Hansom uses runtime reflection via `HandlerConvention` instead. Cost: a slightly slower cold start. Benefit: no `InternalsVisibleTo` magic, no generator to learn, the catalog is debuggable in normal C#, and there is one less moving part in `dotnet build`.
+Wolverine's biggest lever is its source generator — it emits handler code at compile time. Cabbie uses runtime reflection via `HandlerConvention` instead. Cost: a slightly slower cold start. Benefit: no `InternalsVisibleTo` magic, no generator to learn, the catalog is debuggable in normal C#, and there is one less moving part in `dotnet build`.
 
-If Hansom ever needs the cold-start win, the catalog can be cached to disk and read at startup — without changing the public shape.
+If Cabbie ever needs the cold-start win, the catalog can be cached to disk and read at startup — without changing the public shape.
 
 </details>
 
@@ -273,11 +273,11 @@ Per project rules: branch from `origin/main`, PR to `main`, never a stacked PR. 
 ## Adding a feature
 
 <details>
-<summary>How do I add a feature to Hansom?</summary>
+<summary>How do I add a feature to Cabbie?</summary>
 
 1. Open (or write) the `*Plan` for the feature folder. Update **Put here** / **Do not put here** / **Prove with** if the spec has changed.
-2. Write the prove-with test first. A failing xUnit fact in `tests/Hansom.Tests/<Folder>/`, snake_case name that describes behaviour, small fakes.
-3. Implement the smallest type that makes the test pass. Onion rules: Domain does not import Application; Application does not import Infrastructure; `src/Hansom` does not ProjectReference any adapter.
+2. Write the prove-with test first. A failing xUnit fact in `tests/Cabbie.Tests/<Folder>/`, snake_case name that describes behaviour, small fakes.
+3. Implement the smallest type that makes the test pass. Onion rules: Domain does not import Application; Application does not import Infrastructure; `src/Cabbie` does not ProjectReference any adapter.
 4. Update the codemap with the new slice.
 5. Branch from `origin/main`, PR to `main`. No stacked PRs.
 

@@ -5,18 +5,18 @@ alwaysApply: true
 
 # Clean architecture
 
-Hansom is onion: inner layers do not know outer ones. Read the code that exists; do not clone Wolverine’s catalog.
+Cabbie is onion: inner layers do not know outer ones. Read the code that exists; do not clone Wolverine’s catalog.
 
 ## Layers
 
 | Layer | Lives in | May know | Must not |
 | --- | --- | --- | --- |
-| Domain | `src/Hansom/Domain` | nothing outer | I/O, handlers, reflection catalogs, adapter packages |
-| Application | `src/Hansom/Application` | Domain | Npgsql, Rabbit, HTTP, EF; no `ValueObjects/` folders |
-| Infrastructure | `src/Hansom/Infrastructure` | Application ports | adapter package refs (those belong in adapter projects) |
-| Adapters | `Hansom.Postgresql`, `.RabbitMQ`, `.Http` | Hansom core | leaking broker/DB types into core |
+| Domain | `src/Cabbie/Domain` | nothing outer | I/O, handlers, reflection catalogs, adapter packages |
+| Application | `src/Cabbie/Application` | Domain | Npgsql, Rabbit, HTTP, EF; no `ValueObjects/` folders |
+| Infrastructure | `src/Cabbie/Infrastructure` | Application ports | adapter package refs (those belong in adapter projects) |
+| Adapters | `Cabbie.Postgresql`, `.RabbitMQ`, `.Http` | Cabbie core | leaking broker/DB types into core |
 
-`src/Hansom` must not ProjectReference adapter projects. FluentValidation is allowed in core; Npgsql stays in `Hansom.Postgresql`.
+`src/Cabbie` must not ProjectReference adapter projects. FluentValidation is allowed in core; Npgsql stays in `Cabbie.Postgresql`.
 
 ## Taxonomy
 
@@ -26,19 +26,19 @@ Hansom is onion: inner layers do not know outer ones. Read the code that exists;
 
 ```csharp
 // ❌ BAD — Application owning Domain vocabulary
-namespace Hansom.Application.Execution.ValueObjects;
+namespace Cabbie.Application.Execution.ValueObjects;
 public sealed record Retry : ErrorAction;
 
 // ✅ GOOD — named recovery is Domain; Application applies it
-namespace Hansom.Domain.Errors.ValueObjects;
+namespace Cabbie.Domain.Errors.ValueObjects;
 public sealed record Retry : ErrorAction;
 ```
 
 ## Helpdesk sample
 
-- `Helpdesk.Domain`: no Hansom, no infra.
-- `Helpdesk.Application`: Domain + Hansom; messages and handlers.
-- `Helpdesk.Infrastructure`: Application + `Hansom.Postgresql`.
+- `Helpdesk.Domain`: no Cabbie, no infra.
+- `Helpdesk.Application`: Domain + Cabbie; messages and handlers.
+- `Helpdesk.Infrastructure`: Application + `Cabbie.Postgresql`.
 - `Helpdesk.Host`: composition root only.
 
 ## Messaging shape
