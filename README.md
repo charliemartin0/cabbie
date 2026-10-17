@@ -148,7 +148,7 @@ Cabbie borrows the *shape* of [Wolverine](https://github.com/JasperFx/wolverine)
 
 ## Contributing
 
-One slice at a time. No stacked PRs. Every slice ships with prove-with tests. `src/Cabbie` does not `ProjectReference` any adapter. Branch from `origin/main`, PR to `main`. The slice is the unit of progress, not the commit.
+One intent per PR, submitted as Graphite draft stacks (`gt submit --stack --draft`) with conventional-commit titles. Every slice ships with behaviour tests. `src/Cabbie` does not `ProjectReference` any adapter. The build treats analyzer warnings as errors. The slice is the unit of progress, not the commit.
 
 See `learning.md` for a guided tour through event-driven architecture using Cabbie as the working example. See `AGENTS.md` and `.cursor/rules/` for the full set of project rules.
 

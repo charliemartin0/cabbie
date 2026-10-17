@@ -16,8 +16,7 @@ riderModule.iml
 # `npx skills add` lockfile — see note below
 skills-lock.json
 # OpenCode / agent tooling artifacts (regenerable from ~/.config/opencode/skills)
-# AGENTS.md mirrors .cursor/rules/*.mdc; opencode.json points OpenCode at those rules
-AGENTS.md
+# opencode.json points OpenCode at .cursor/rules (AGENTS.md is committed: it is the agent entrypoint)
 opencode.json
 # OpenCode local runtime state (queue.json, package metadata, node_modules)
 .opencode/
