@@ -13,8 +13,9 @@ public sealed class InMemoryMessageStore : IMessageStore
 {
     private readonly ConcurrentDictionary<EnvelopeId, Envelope> _staged = new();
     private readonly ConcurrentDictionary<EnvelopeId, Envelope> _pending = new();
-    private readonly ConcurrentDictionary<EnvelopeId, byte> _inFlight = new();
-    private readonly ConcurrentDictionary<EnvelopeId, byte> _processed = new();
+    private readonly ConcurrentDictionary<InboxEntry, byte> _inFlight = new();
+    private readonly ConcurrentDictionary<InboxEntry, byte> _processed = new();
+    private readonly object _inboxGate = new();
     private readonly ConcurrentDictionary<EnvelopeId, DeadLetter> _deadLetters = new();
 
     /// <summary>
@@ -120,31 +121,35 @@ public sealed class InMemoryMessageStore : IMessageStore
 
         public InboxStore(InMemoryMessageStore store) => _store = store;
 
-        public ValueTask<bool> TryAcquireAsync(EnvelopeId id, CancellationToken ct = default)
+        public ValueTask<bool> TryAcquireAsync(EnvelopeId id, HandlerName handler, CancellationToken ct = default)
         {
-            if (_store._processed.ContainsKey(id))
+            var key = new InboxEntry(id, handler);
+            lock (_store._inboxGate)
             {
-                return ValueTask.FromResult(false);
+                return ValueTask.FromResult(!_store._processed.ContainsKey(key) && _store._inFlight.TryAdd(key, 0));
+            }
+        }
+
+        public ValueTask MarkProcessedAsync(EnvelopeId id, HandlerName handler, CancellationToken ct = default)
+        {
+            var key = new InboxEntry(id, handler);
+            lock (_store._inboxGate)
+            {
+                _store._inFlight.TryRemove(key, out _);
+                _store._processed[key] = 0;
             }
 
-            return ValueTask.FromResult(_store._inFlight.TryAdd(id, 0));
-        }
-
-        public ValueTask MarkProcessedAsync(EnvelopeId id, CancellationToken ct = default)
-        {
-            _store._inFlight.TryRemove(id, out _);
-            _store._processed[id] = 0;
             return ValueTask.CompletedTask;
         }
 
-        public ValueTask ReleaseAsync(EnvelopeId id, CancellationToken ct = default)
+        public ValueTask ReleaseAsync(EnvelopeId id, HandlerName handler, CancellationToken ct = default)
         {
-            _store._inFlight.TryRemove(id, out _);
+            _store._inFlight.TryRemove(new InboxEntry(id, handler), out _);
             return ValueTask.CompletedTask;
         }
 
-        public ValueTask<IReadOnlyList<EnvelopeId>> LoadInFlightAsync(CancellationToken ct = default) =>
-            ValueTask.FromResult<IReadOnlyList<EnvelopeId>>(_store._inFlight.Keys.ToList());
+        public ValueTask<IReadOnlyList<InboxEntry>> LoadInFlightAsync(CancellationToken ct = default) =>
+            ValueTask.FromResult<IReadOnlyList<InboxEntry>>(_store._inFlight.Keys.ToList());
     }
 
     private sealed class DeadLetterStore : IDeadLetterStore

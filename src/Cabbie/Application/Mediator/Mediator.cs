@@ -53,7 +53,8 @@ public sealed class Mediator : IMessageBus
         ErrorPolicyCatalog? policies = null,
         RoutingCatalog? routing = null,
         ISender? sender = null,
-        IHandlerAttemptObserver? attempts = null)
+        IHandlerAttemptObserver? attempts = null,
+        IInboxStore? inbox = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         Catalog = catalog;
@@ -81,7 +82,8 @@ public sealed class Mediator : IMessageBus
             hold: scheduled,
             routing: _routing,
             onImmediate: OnImmediateAsync,
-            cascades: cascades);
+            cascades: cascades,
+            inbox: inbox);
         _scheduler = new MessageScheduler(
             scheduled,
             (envelope, cancellationToken) =>

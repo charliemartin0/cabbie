@@ -70,16 +70,16 @@ public sealed class CompositeMessageStoreTests
 
     private sealed class RecordingInboxStore : IInboxStore
     {
-        public ValueTask<bool> TryAcquireAsync(EnvelopeId id, CancellationToken ct = default) =>
+        public ValueTask<bool> TryAcquireAsync(EnvelopeId id, HandlerName handler, CancellationToken ct = default) =>
             throw new NotImplementedException();
 
-        public ValueTask MarkProcessedAsync(EnvelopeId id, CancellationToken ct = default) =>
+        public ValueTask MarkProcessedAsync(EnvelopeId id, HandlerName handler, CancellationToken ct = default) =>
             throw new NotImplementedException();
 
-        public ValueTask ReleaseAsync(EnvelopeId id, CancellationToken ct = default) =>
+        public ValueTask ReleaseAsync(EnvelopeId id, HandlerName handler, CancellationToken ct = default) =>
             throw new NotImplementedException();
 
-        public ValueTask<IReadOnlyList<EnvelopeId>> LoadInFlightAsync(CancellationToken ct = default) =>
+        public ValueTask<IReadOnlyList<InboxEntry>> LoadInFlightAsync(CancellationToken ct = default) =>
             throw new NotImplementedException();
     }
 
