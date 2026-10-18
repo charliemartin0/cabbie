@@ -36,7 +36,7 @@ public sealed class ExecutorScheduleRetryTests
     }
 
     [Fact]
-    public async Task schedule_retry_on_scheduled_parks_the_same_envelope_with_attempts_incremented()
+    public async Task schedule_retry_on_scheduled_parks_a_new_id_caused_by_the_envelope_with_attempts_incremented()
     {
         var hold = new InMemoryScheduledEnvelopeHold();
         var policies = new ErrorPolicyCatalog();
@@ -50,10 +50,35 @@ public sealed class ExecutorScheduleRetryTests
 
         Assert.Null(result);
         var parked = Assert.Single(hold.Peek());
-        Assert.Equal(envelope.Id, parked.Id);
+        Assert.NotEqual(envelope.Id, parked.Id);
+        Assert.Equal(envelope.Id.Value, parked.CausationId!.Value);
+        Assert.Equal(envelope.CorrelationId, parked.CorrelationId);
         Assert.Equal(2, parked.Attempts.Value);
         Assert.True(parked.DeliverBy.Value > DateTimeOffset.UtcNow);
         Assert.Equal([1], ScheduleRetryChargeHandler.SeenAttempts);
+    }
+
+    [Fact]
+    public async Task two_handlers_scheduling_retries_park_separately_and_removing_one_keeps_the_other()
+    {
+        var hold = new InMemoryScheduledEnvelopeHold();
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<TimeoutException>().ScheduleRetry(TimeSpan.FromMinutes(1));
+        var executor = new Executor(policies, scheduled: hold);
+        Envelope envelope = ChargePaymentEnvelope();
+
+        await executor.InvokeAsync(envelope, HandlerFor<ScheduleRetryChargeHandler>() with { Scheduled = true });
+        await executor.InvokeAsync(envelope, HandlerFor<ScheduleRetrySecondHandler>() with { Scheduled = true });
+
+        var parked = hold.Peek();
+        Assert.Equal(2, parked.Count);
+        Assert.NotEqual(parked[0].Id, parked[1].Id);
+        Assert.Contains("ScheduleRetryChargeHandler", parked[0].Handler!.Value);
+        Assert.Contains("ScheduleRetrySecondHandler", parked[1].Handler!.Value);
+
+        Assert.True(hold.TryRemove(parked[0].Id));
+        var remaining = Assert.Single(hold.Peek());
+        Assert.Equal(parked[1].Id, remaining.Id);
     }
 
     private static Envelope ChargePaymentEnvelope() =>
@@ -78,4 +103,9 @@ public sealed class ScheduleRetryChargeHandler
         SeenAttempts.Add(envelope.Attempts.Value);
         throw new TimeoutException("Payment gateway timeout");
     }
+}
+
+public sealed class ScheduleRetrySecondHandler
+{
+    public void Handle(ChargePayment payment) => throw new TimeoutException("Payment gateway timeout");
 }

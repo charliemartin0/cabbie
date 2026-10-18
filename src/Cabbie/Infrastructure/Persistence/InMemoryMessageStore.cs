@@ -14,15 +14,43 @@ public sealed class InMemoryMessageStore : IMessageStore
     private readonly ConcurrentDictionary<EnvelopeId, Envelope> _staged = new();
     private readonly ConcurrentDictionary<EnvelopeId, Envelope> _pending = new();
     private readonly ConcurrentDictionary<InboxEntry, byte> _inFlight = new();
-    private readonly ConcurrentDictionary<InboxEntry, byte> _processed = new();
+    private readonly Dictionary<InboxEntry, DateTimeOffset> _processed = new();
+    private readonly Queue<(InboxEntry Key, DateTimeOffset At)> _processedOrder = new();
     private readonly object _inboxGate = new();
+    private readonly TimeProvider _time;
+    private readonly TimeSpan _inboxRetention;
+    private readonly int _inboxCapacity;
     private readonly ConcurrentDictionary<EnvelopeId, DeadLetter> _deadLetters = new();
 
     /// <summary>
-    /// Create an empty store.
+    /// Default time a processed inbox entry is remembered for duplicate detection.
     /// </summary>
-    public InMemoryMessageStore()
+    public static readonly TimeSpan DefaultInboxRetention = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// Default maximum number of processed inbox entries kept.
+    /// </summary>
+    public const int DefaultInboxCapacity = 100_000;
+
+    /// <summary>
+    /// Create an empty store. Processed inbox entries are forgotten after
+    /// <paramref name="inboxRetention"/> or once more than <paramref name="inboxCapacity"/> are held
+    /// (oldest first), so the inbox cannot grow without bound.
+    /// </summary>
+    public InMemoryMessageStore(
+        TimeProvider? timeProvider = null,
+        TimeSpan? inboxRetention = null,
+        int inboxCapacity = DefaultInboxCapacity)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(inboxCapacity, 0);
+        if (inboxRetention is { } retention)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(retention, TimeSpan.Zero, nameof(inboxRetention));
+        }
+
+        _time = timeProvider ?? TimeProvider.System;
+        _inboxRetention = inboxRetention ?? DefaultInboxRetention;
+        _inboxCapacity = inboxCapacity;
         Outbox = new OutboxStore(this);
         Inbox = new InboxStore(this);
         DeadLetter = new DeadLetterStore(this);
@@ -52,6 +80,16 @@ public sealed class InMemoryMessageStore : IMessageStore
 
     /// <inheritdoc />
     public IDeadLetterStore DeadLetter { get; }
+
+    private void PurgeProcessed()
+    {
+        DateTimeOffset cutoff = _time.GetUtcNow() - _inboxRetention;
+        while (_processedOrder.Count > 0
+            && (_processedOrder.Count > _inboxCapacity || _processedOrder.Peek().At <= cutoff))
+        {
+            _processed.Remove(_processedOrder.Dequeue().Key);
+        }
+    }
 
     /// <summary>
     /// Begin a short-lived outbox transaction. Staging plus Commit/Rollback is the
@@ -126,6 +164,7 @@ public sealed class InMemoryMessageStore : IMessageStore
             var key = new InboxEntry(id, handler);
             lock (_store._inboxGate)
             {
+                _store.PurgeProcessed();
                 return ValueTask.FromResult(!_store._processed.ContainsKey(key) && _store._inFlight.TryAdd(key, 0));
             }
         }
@@ -136,7 +175,13 @@ public sealed class InMemoryMessageStore : IMessageStore
             lock (_store._inboxGate)
             {
                 _store._inFlight.TryRemove(key, out _);
-                _store._processed[key] = 0;
+                DateTimeOffset now = _store._time.GetUtcNow();
+                if (_store._processed.TryAdd(key, now))
+                {
+                    _store._processedOrder.Enqueue((key, now));
+                }
+
+                _store.PurgeProcessed();
             }
 
             return ValueTask.CompletedTask;

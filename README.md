@@ -120,7 +120,7 @@ public interface IReceiver { Task<ReceiveOutcome> ReceiveAsync(Envelope envelope
 
 - A policy `Requeue(delay...)` re-sends the envelope as the next attempt for the failed handler only (the `cabbie-handler` header names it), after the policy delay, and acks the original. The local transport has no redelivery: a `Nack` is logged and the envelope dropped, as before.
 - Delivery is at-least-once, deduplicated by the inbox: `IInboxStore` records each (envelope id, handler) pair, so a redelivered envelope never re-runs a handler that already finished. A cascade send failure after handler success leaves the handler marked done; the redelivery retries only the cascades (held in process memory, lost on restart). A handler that faults, is cancelled, or hands off to a `Requeue`/`ScheduleRetry` attempt is released for the next attempt.
-- Stays in-process: `InvokeAsync`, tracked sessions, the scheduled hold and outbox staging.
+- Stays in-process: `InvokeAsync`, tracked sessions, the scheduled hold and outbox staging. These never write to the inbox; only envelopes delivered by a transport do. A handler running in an outbox transaction is marked processed only after that transaction commits. The in-memory inbox forgets processed entries after one hour or beyond 100,000 entries (oldest first).
 - Envelope validation no longer restricts destination schemes (it was a closed `local`/`tcp`/`rabbitmq` list); the registered transports decide.
 
 ### SQS
