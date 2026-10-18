@@ -196,6 +196,32 @@ public sealed class MessageSchedulerTests
         Assert.Empty(cascades.Published);
     }
 
+    [Fact]
+    public async Task dispatch_failure_outside_the_error_policy_keeps_the_row_for_the_next_poll()
+    {
+        var hold = new InMemoryScheduledEnvelopeHold();
+        await hold.ParkAsync(TimeoutEnvelope());
+        int calls = 0;
+        var scheduler = new MessageScheduler(hold, (_, _) =>
+        {
+            if (++calls == 1)
+            {
+                throw new InvalidOperationException("inbox unavailable");
+            }
+
+            return Task.CompletedTask;
+        });
+        DateTimeOffset asOf = DateTimeOffset.UtcNow.AddYears(10);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => scheduler.PlayDue(asOf));
+        Assert.Single(hold.Peek());
+
+        await scheduler.PlayDue(asOf);
+
+        Assert.Equal(2, calls);
+        Assert.Empty(hold.Peek());
+    }
+
     private static Envelope TimeoutEnvelope(DateTimeOffset? deliverBy = null, int orderId = 1) =>
         Cabbie.Tests.Domain.Envelope.EnvelopeFactory.Create(
             message: new Cabbie.Domain.Messaging.ValueObjects.Message(new OrderTimeout(orderId)),

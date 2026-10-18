@@ -16,12 +16,14 @@ public sealed class SqsTransport : ITransport
     private readonly EnvelopeCodec _codec;
     private readonly SqsTransportOptions _options;
     private readonly ILogger _logger;
+    private readonly TimeProvider _timeProvider;
 
     public SqsTransport(
         IAmazonSQS client,
         EnvelopeCodec codec,
         SqsTransportOptions? options = null,
-        ILoggerFactory? loggerFactory = null)
+        ILoggerFactory? loggerFactory = null,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(codec);
@@ -30,6 +32,7 @@ public sealed class SqsTransport : ITransport
         _options = options ?? new SqsTransportOptions();
         _options.Validate();
         _logger = loggerFactory?.CreateLogger<SqsTransport>() ?? NullLogger<SqsTransport>.Instance;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public string Scheme => SqsEndpoint.Scheme;
@@ -44,6 +47,6 @@ public sealed class SqsTransport : ITransport
     {
         ArgumentNullException.ThrowIfNull(receiver);
         SqsEndpoint endpoint = SqsEndpoint.Parse(address);
-        return new SqsListener(address, endpoint, _client, _codec, receiver, _options, _logger);
+        return new SqsListener(address, endpoint, _client, _codec, receiver, _options, _logger, _timeProvider);
     }
 }

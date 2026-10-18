@@ -1,4 +1,5 @@
 using Cabbie.Application.Bus;
+using Cabbie.Application.Execution;
 
 namespace Cabbie.Application.Scheduling;
 
@@ -49,11 +50,17 @@ public sealed class MessageScheduler : IMessageScheduler
                 await ReleaseFrom(claimed, i);
                 throw;
             }
-            catch (Exception)
+            catch (HandlerFault)
             {
-                // The error policy already dead-lettered the envelope or parked its retry: it is consumed.
+                // The executor ran the error policy (dead-lettered or parked a retry): the envelope is consumed.
                 await _hold.CompleteAsync(claimed[i], CancellationToken.None);
                 await ReleaseFrom(claimed, i + 1);
+                throw;
+            }
+            catch (Exception)
+            {
+                // Failure outside the error policy (inbox, cascade send): keep the row for the next poll.
+                await ReleaseFrom(claimed, i);
                 throw;
             }
         }
