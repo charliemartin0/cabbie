@@ -26,24 +26,21 @@ public sealed class LocalQueueSagaTests
         });
         using IHost host = builder.Build();
         await host.StartAsync();
-        try
-        {
-            IMessageBus bus = host.Services.GetRequiredService<IMessageBus>();
-            ISagaStore store = host.Services.GetRequiredService<ISagaStore>();
+        IMessageBus bus = host.Services.GetRequiredService<IMessageBus>();
+        ISagaStore store = host.Services.GetRequiredService<ISagaStore>();
 
-            // Start the saga so the Handle path has a row to load.
-            await bus.InvokeAsync(new QueueSagaStart(1, "started"));
+        // Start the saga so the Handle path has a row to load.
+        await bus.InvokeAsync(new QueueSagaStart(1, "started"));
 
-            await bus.PublishAsync(new SagasViaQueueMessage(1, "processed"));
-            await QueueSaga.Handled.WaitAsync(TimeSpan.FromSeconds(5));
+        await bus.PublishAsync(new SagasViaQueueMessage(1, "processed"));
+        await QueueSaga.Handled.WaitAsync(TimeSpan.FromSeconds(5));
 
-            // The mutation must have landed in the store, not on an ephemeral instance.
-            var saga = Assert.IsType<QueueSaga>(store.Load(typeof(QueueSaga), new SagaId("1")));
-            Assert.Equal("processed", saga.Status);
-        }
-        finally
-        {
-            await host.StopAsync();
-        }
+        // Handled fires inside Handle, before the saga orchestration saves; stopping the host
+        // drains the local queue, so the save has finished.
+        await host.StopAsync();
+
+        // The mutation must have landed in the store, not on an ephemeral instance.
+        var saga = Assert.IsType<QueueSaga>(store.Load(typeof(QueueSaga), new SagaId("1")));
+        Assert.Equal("processed", saga.Status);
     }
 }
