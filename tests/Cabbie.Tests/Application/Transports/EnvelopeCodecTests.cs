@@ -114,6 +114,28 @@ public sealed class EnvelopeCodecTests
     }
 
     [Fact]
+    public void encode_rejects_custom_headers_that_differ_only_by_case()
+    {
+        EnvelopeCodec codec = Codec();
+        Envelope envelope = EnvelopeFactory.Create(
+            headers: new Headers(new Dictionary<string, string> { ["Tenant"] = "a", ["tenant"] = "b" }));
+
+        Assert.Throws<ArgumentException>(() => codec.Encode(envelope));
+    }
+
+    [Fact]
+    public void decode_of_headers_that_differ_only_by_case_throws_unreadable_transport_message()
+    {
+        EnvelopeCodec codec = Codec();
+        TransportMessage wire = codec.Encode(EnvelopeFactory.Create());
+        var colliding = wire.Headers.ToDictionary(pair => pair.Key, pair => pair.Value);
+        colliding["Tenant"] = "a";
+        colliding["tenant"] = "b";
+
+        Assert.Throws<UnreadableTransportMessage>(() => codec.Decode(wire with { Headers = colliding }));
+    }
+
+    [Fact]
     public void decode_wraps_any_serializer_exception_and_keeps_it_as_the_inner_exception()
     {
         var messageTypes = new MessageTypeCatalog();
