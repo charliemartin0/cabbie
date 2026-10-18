@@ -1,5 +1,11 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Cabbie.RabbitMQ</PackageId>
+    <Description>RabbitMQ adapter for Cabbie.</Description>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Cabbie\Cabbie.csproj" />
   </ItemGroup>

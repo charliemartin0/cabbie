@@ -1,6 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Cabbie</PackageId>
+    <Description>Wolverine-shaped in-process message bus kernel for .NET: handler discovery, cascading messages, sagas, error policies, local queues and in-memory stores.</Description>
+  </PropertyGroup>
+
+  <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

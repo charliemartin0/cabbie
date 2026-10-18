@@ -41,7 +41,22 @@ Cabbie is named for the driver of the hansom, the Victorian London cab — small
 ```bash
 dotnet build src/Cabbie
 dotnet test
+dotnet run --project samples/GettingStarted
 ```
+
+`samples/GettingStarted` is an in-memory console host: `PlaceOrder` is handled by one handler, whose return value cascades as `OrderPlaced` to a second handler. A test (`tests/Cabbie.Samples.Tests`) runs it.
+
+### Packages
+
+| Package | Contents |
+|---|---|
+| `Cabbie` | Kernel: handlers, cascades, sagas, error policies, local queues, in-memory stores |
+| `Cabbie.Postgresql` | Durable scheduler and PostgreSQL stores |
+| `Cabbie.EntityFrameworkCore` | EF Core transactional outbox and relay |
+| `Cabbie.Aws` | SQS and SNS transports |
+| `Cabbie.Http`, `Cabbie.RabbitMQ` | Scaffolds, no public API yet |
+
+All packages share one version, kept in `Directory.Build.props` and bumped by release-please release PRs. CI packs every package on each PR and uploads them as the `nuget-packages` artifact. Nothing is published to nuget.org.
 
 ## Dependency injection
 
@@ -195,6 +210,7 @@ Cabbie/
   src/Cabbie.RabbitMQ/           broker adapter (scaffold)
   src/Cabbie.Http/               HTTP front door (scaffold)
   src/Cabbie.Aws/                AWS adapter: SQS and SNS transports (shipped)
+  samples/GettingStarted/        in-memory console host: one handler, one cascade
   tests/Cabbie.Aws.Tests/        SQS and SNS against LocalStack (Docker): SQS runs the shared contract suite
   tests/Cabbie.Tests/            xUnit facts, small fakes
 ```
