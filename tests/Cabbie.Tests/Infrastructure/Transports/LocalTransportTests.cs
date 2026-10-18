@@ -43,6 +43,27 @@ public sealed class LocalTransportTests
     }
 
     [Fact]
+    public async Task unreadable_message_is_dead_lettered_and_never_reaches_the_receiver()
+    {
+        var receiver = new RecordingReceiver();
+        var transport = new LocalTransport(new LocalQueueCatalog(receiver), Codec());
+        IListener listener = transport.CreateListener(Orders, receiver);
+        await listener.StartAsync(CancellationToken.None);
+        Envelope poison = EnvelopeFactory.Create(destination: new Destination(Orders));
+        TransportMessage unreadable = Codec().Encode(poison) with { Body = "not json"u8.ToArray() };
+        transport.EnqueueEncoded(Orders, unreadable);
+        Envelope next = EnvelopeFactory.Create(destination: new Destination(Orders));
+
+        await transport.CreateSender(Orders).SendAsync(next);
+        await receiver.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await listener.StopAsync(CancellationToken.None);
+
+        Assert.Equal(next.Id, Assert.Single(receiver.Received).Id);
+        TransportMessage deadLetter = Assert.Single(transport.DeadLetters(Orders));
+        Assert.Equal("not json"u8.ToArray(), deadLetter.Body.ToArray());
+    }
+
+    [Fact]
     public async Task local_listener_stop_waits_for_the_in_flight_envelope_and_then_takes_no_more()
     {
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

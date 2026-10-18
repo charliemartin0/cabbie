@@ -31,7 +31,7 @@ public sealed class EnvelopeCodec
     public TransportMessage Encode(Envelope envelope)
     {
         ArgumentNullException.ThrowIfNull(envelope);
-        var headers = new Dictionary<string, string>(StringComparer.Ordinal);
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach ((string key, string value) in envelope.Headers.Value)
         {
             if (key.StartsWith(EnvelopeHeaders.Prefix, StringComparison.OrdinalIgnoreCase))
@@ -39,7 +39,10 @@ public sealed class EnvelopeCodec
                 throw new ArgumentException($"Header '{key}' uses the reserved 'cabbie-' prefix.", nameof(envelope));
             }
 
-            headers.Add(key, value);
+            if (!headers.TryAdd(key, value))
+            {
+                throw new ArgumentException($"Header '{key}' differs from another header only by case.", nameof(envelope));
+            }
         }
 
         headers[EnvelopeHeaders.MessageId] = envelope.Id.Value.ToString("D");
@@ -72,8 +75,14 @@ public sealed class EnvelopeCodec
     public Envelope Decode(TransportMessage message)
     {
         ArgumentNullException.ThrowIfNull(message);
-        IReadOnlyDictionary<string, string> headers =
-            new Dictionary<string, string>(message.Headers, StringComparer.OrdinalIgnoreCase);
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach ((string key, string value) in message.Headers)
+        {
+            if (!headers.TryAdd(key, value))
+            {
+                throw new UnreadableTransportMessage($"Header '{key}' appears more than once, ignoring case.");
+            }
+        }
 
         Guid id = ParseGuid(headers, EnvelopeHeaders.MessageId);
         string typeName = Required(headers, EnvelopeHeaders.MessageType);

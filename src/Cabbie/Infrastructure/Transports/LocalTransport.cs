@@ -10,8 +10,9 @@ namespace Cabbie.Infrastructure.Transports;
 /// enqueues to the per-address <see cref="LocalQueueAgent"/>; a listener starts that agent
 /// bound to the given receiver and stops by draining it. Without an
 /// <see cref="EnvelopeCodec"/> envelopes pass by reference (no serialization, as in-process
-/// delivery always did); with one, every send round-trips through the serializer, which is
-/// how the transport contract is exercised against a serializing transport.
+/// delivery always did); with one, every send is encoded and decoded by the listener, which
+/// dead-letters unreadable messages there. That is how the transport contract is exercised
+/// against a serializing transport.
 /// </summary>
 public sealed class LocalTransport : ITransport
 {
@@ -26,6 +27,28 @@ public sealed class LocalTransport : ITransport
     }
 
     public string Scheme => "local";
+
+    /// <summary>
+    /// Hands over a message some other producer wrote, as a broker would; the listener decodes it.
+    /// </summary>
+    internal void EnqueueEncoded(Uri address, TransportMessage message)
+    {
+        ArgumentNullException.ThrowIfNull(address);
+        ArgumentNullException.ThrowIfNull(message);
+        if (_codec is null)
+        {
+            throw new InvalidOperationException("Encoded messages need a LocalTransport created with an EnvelopeCodec.");
+        }
+
+        _queues.For(new Destination(address)).Enqueue(message, _codec);
+    }
+
+    /// <summary>The messages the listener at <paramref name="address"/> could not read and dead-lettered.</summary>
+    internal IReadOnlyList<TransportMessage> DeadLetters(Uri address)
+    {
+        ArgumentNullException.ThrowIfNull(address);
+        return _queues.For(new Destination(address)).DeadLetters;
+    }
 
     public ISender CreateSender(Uri address)
     {
@@ -45,7 +68,15 @@ public sealed class LocalTransport : ITransport
         public ValueTask SendAsync(Envelope envelope, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(envelope);
-            agent.Enqueue(codec is null ? envelope : codec.Decode(codec.Encode(envelope)));
+            if (codec is null)
+            {
+                agent.Enqueue(envelope);
+            }
+            else
+            {
+                agent.Enqueue(codec.Encode(envelope), codec);
+            }
+
             return ValueTask.CompletedTask;
         }
 
