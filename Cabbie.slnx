@@ -1,11 +1,4 @@
 <Solution>
-  <Folder Name="/samples/" />
-  <Folder Name="/samples/Helpdesk/">
-    <Project Path="samples/Helpdesk/src/Helpdesk.Application/Helpdesk.Application.csproj" />
-    <Project Path="samples/Helpdesk/src/Helpdesk.Domain/Helpdesk.Domain.csproj" />
-    <Project Path="samples/Helpdesk/src/Helpdesk.Host/Helpdesk.Host.csproj" />
-    <Project Path="samples/Helpdesk/src/Helpdesk.Infrastructure/Helpdesk.Infrastructure.csproj" />
-  </Folder>
   <Folder Name="/src/">
     <Project Path="src/Cabbie.Http/Cabbie.Http.csproj" />
     <Project Path="src/Cabbie.Postgresql/Cabbie.Postgresql.csproj" />
@@ -13,7 +6,6 @@
     <Project Path="src/Cabbie/Cabbie.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/Helpdesk.Tests/Helpdesk.Tests.csproj" />
     <Project Path="tests/Cabbie.Tests.Handlers/Cabbie.Tests.Handlers.csproj" />
     <Project Path="tests/Cabbie.Transports.Contracts/Cabbie.Transports.Contracts.csproj" />
     <Project Path="tests/Cabbie.Tests.FactoryHandlers/Cabbie.Tests.FactoryHandlers.csproj" />
