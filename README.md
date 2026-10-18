@@ -136,6 +136,7 @@ public interface IReceiver { Task<ReceiveOutcome> ReceiveAsync(Envelope envelope
 | `Nack` | `ChangeMessageVisibility` to `NackDelay` (default 5s): redelivered after that |
 | `Defer` | `ChangeMessageVisibility` to 0: visible again at once |
 
+- A failed receive (any exception except cancellation) is logged and retried after `PollErrorDelay` (default 5s), doubling per consecutive failure up to `MaxPollErrorDelay` (default 1 min); polling never stops until `StopAsync`. `SqsTransport` takes an optional `TimeProvider` for that pause.
 - `VisibilityTimeout` (default 30s) is sent with every receive. A handler that runs longer than it is redelivered while still running; the inbox dedupes, and there is no visibility heartbeat yet. A listener that dies mid-flight has its messages redelivered after the same timeout.
 - An unreadable message is never nacked: it is copied to the dead-letter queue with its body and attributes plus `cabbie-dead-letter-reason`, and the source message is deleted only after that write succeeds. If the dead-letter write fails, the source stays and is retried after the visibility timeout.
 - `StopAsync` stops polling and waits for the messages in flight; cancelling its token abandons the wait and cancels the receiver (those messages are released). Several listeners on one queue compete: each message goes to one of them.
