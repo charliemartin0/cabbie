@@ -13,6 +13,6 @@ internal static partial class OutboxRelayLog
     [LoggerMessage(
         EventId = 401,
         Level = LogLevel.Warning,
-        Message = "Outbox row {OutboxId} is unreadable; leaving it unsent")]
+        Message = "Outbox row {OutboxId} is unreadable; dead-lettered and skipped from now on")]
     public static partial void RowUnreadable(ILogger logger, Guid outboxId, Exception exception);
 }
