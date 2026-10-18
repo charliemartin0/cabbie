@@ -34,13 +34,6 @@ namespace Cabbie.Domain.Errors.ValueObjects;
 public sealed record Retry : ErrorAction;
 ```
 
-## Helpdesk sample
-
-- `Helpdesk.Domain`: no Cabbie, no infra.
-- `Helpdesk.Application`: Domain + Cabbie; messages and handlers.
-- `Helpdesk.Infrastructure`: Application + `Cabbie.Postgresql`.
-- `Helpdesk.Host`: composition root only.
-
 ## Messaging shape
 
 Handlers never call each other. They return messages. The bus wraps an `Envelope` and either `Invoke`s now or `Publish`es. Dependencies on handler types are constructor-only; method parameters are the message, `CancellationToken`, and optionally `Envelope`.

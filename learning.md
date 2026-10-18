@@ -180,7 +180,7 @@ sequenceDiagram
 
 Read top-to-bottom: `PlaceOrder` starts the saga, the saga cascades the charge and the timeout, the charge retries until it succeeds, the saga marks complete, the late timeout arrives and the saga's `NotFound` swallows it. The `OrderTimeout` is *not* cancelled when the saga completes — EDA assumes messages arrive late, twice, or after the process is over.
 
-Sample code in `samples/Helpdesk/src/Helpdesk.Application/OrderSaga.cs`.
+Sample code: the saga fixtures in `tests/Cabbie.Tests.Handlers/ConversationFixtures.cs`, exercised by `tests/Cabbie.Tests/Infrastructure/Hosting/HostConversationTests.cs`.
 
 </details>
 
@@ -235,7 +235,7 @@ Inner layers do not depend on outer ones. Domain does not know HTTP or Postgres.
 
 - **Messages** are the language of the domain. They are not a controller DTO and not a SQL row.
 - **Handlers / saga methods** are use cases. `OrderSaga.Start` must not new up `ChargePaymentHandler`.
-- **Helpdesk.Host** is the composition root. Helpdesk.Domain must not reference Cabbie.
+- **The host project** is the composition root. The domain project must not reference Cabbie.
 
 A **saga is a process manager**, not an aggregate. Cabbie's `Saga` does not enforce "an order's line items." It tracks "this instance is open until something calls `MarkCompleted`." The timeout is a message in time, not a `DateTime` field you poll.
 
