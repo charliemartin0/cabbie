@@ -1,5 +1,4 @@
 using Cabbie.Application.Bus;
-using Cabbie.Domain.Envelope;
 
 namespace Cabbie.Application.Scheduling;
 
@@ -36,47 +35,35 @@ public sealed class MessageScheduler : IMessageScheduler
     public async Task PlayDue(DateTimeOffset asOf, CancellationToken cancellationToken = default)
     {
         using IDisposable play = _hold.BeginPlay();
-        IReadOnlyList<Envelope> snapshot = [.. Due(asOf)];
-        foreach (Envelope envelope in snapshot)
+        IReadOnlyList<ClaimedEnvelope> claimed = await _hold.ClaimDueAsync(asOf, cancellationToken);
+        for (int i = 0; i < claimed.Count; i++)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!_hold.TryRemove(envelope.Id))
-            {
-                continue;
-            }
-
             try
             {
-                await InvokeDue(envelope, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                await _dispatch(claimed[i].Envelope, cancellationToken);
+                await _hold.CompleteAsync(claimed[i], CancellationToken.None);
             }
             catch (OperationCanceledException)
             {
-                _hold.Park(envelope);
+                await ReleaseFrom(claimed, i);
+                throw;
+            }
+            catch (Exception)
+            {
+                // The error policy already dead-lettered the envelope or parked its retry: it is consumed.
+                await _hold.CompleteAsync(claimed[i], CancellationToken.None);
+                await ReleaseFrom(claimed, i + 1);
                 throw;
             }
         }
     }
 
-    private IEnumerable<Envelope> Due(DateTimeOffset asOf) =>
-        _hold.Peek()
-            .Where(envelope => envelope.DeliverBy.Value is { } due && due <= asOf)
-            .OrderBy(envelope => envelope.DeliverBy.Value)
-            .ThenBy(envelope => IndexOf(envelope));
-
-    private int IndexOf(Envelope envelope)
+    private async Task ReleaseFrom(IReadOnlyList<ClaimedEnvelope> claimed, int start)
     {
-        IReadOnlyList<Envelope> held = _hold.Peek();
-        for (int i = 0; i < held.Count; i++)
+        for (int i = start; i < claimed.Count; i++)
         {
-            if (held[i].Id.Value == envelope.Id.Value)
-            {
-                return i;
-            }
+            await _hold.ReleaseAsync(claimed[i], CancellationToken.None);
         }
-
-        return int.MaxValue;
     }
-
-    private Task InvokeDue(Envelope envelope, CancellationToken cancellationToken) =>
-        _dispatch(envelope, cancellationToken);
 }

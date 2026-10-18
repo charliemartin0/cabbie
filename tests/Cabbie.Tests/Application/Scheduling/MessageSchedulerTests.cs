@@ -53,7 +53,7 @@ public sealed class MessageSchedulerTests
         var catalog = new HandlerCatalog();
         catalog.Scan(typeof(FlakyScheduledTimeoutHandler));
         var executor = new Executor(policies, scheduled: hold);
-        hold.Park(TimeoutEnvelope());
+        await hold.ParkAsync(TimeoutEnvelope());
         var scheduler = new MessageScheduler(new MessageDelivery(catalog, executor, hold), hold);
 
         await scheduler.PlayDue(DateTimeOffset.UtcNow.AddYears(10));
@@ -71,7 +71,7 @@ public sealed class MessageSchedulerTests
         var executor = new Executor(new ErrorPolicyCatalog(), scheduled: hold);
         var scheduler = new MessageScheduler(new MessageDelivery(catalog, executor, hold), hold);
 
-        hold.Park(TimeoutEnvelope(DateTimeOffset.UtcNow.AddHours(1)));
+        await hold.ParkAsync(TimeoutEnvelope(DateTimeOffset.UtcNow.AddHours(1)));
 
         await scheduler.PlayDue(DateTimeOffset.UtcNow);
 
@@ -89,8 +89,8 @@ public sealed class MessageSchedulerTests
         var executor = new Executor(policies, scheduled: hold);
         var scheduler = new MessageScheduler(new MessageDelivery(catalog, executor, hold), hold);
         DateTimeOffset due = DateTimeOffset.UtcNow.AddMinutes(-1);
-        hold.Park(TimeoutEnvelope(due, orderId: 1));
-        hold.Park(TimeoutEnvelope(due, orderId: 2));
+        await hold.ParkAsync(TimeoutEnvelope(due, orderId: 1));
+        await hold.ParkAsync(TimeoutEnvelope(due, orderId: 2));
 
         await Assert.ThrowsAsync<HandlerFault>(() => scheduler.PlayDue(DateTimeOffset.UtcNow));
 
@@ -121,7 +121,7 @@ public sealed class MessageSchedulerTests
         catalog.Scan(typeof(PlayedTimeoutHandler));
         var executor = new Executor(new ErrorPolicyCatalog(), scheduled: hold);
         var scheduler = new MessageScheduler(new MessageDelivery(catalog, executor, hold), hold);
-        hold.Park(TimeoutEnvelope());
+        await hold.ParkAsync(TimeoutEnvelope());
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
 

@@ -32,7 +32,11 @@ public sealed class OutgoingDispatcher
         _onImmediate = onImmediate;
     }
 
-    public bool TryPark(object message, DeliveryOptions? options, Envelope? parent = null)
+    public async ValueTask<bool> TryParkAsync(
+        object message,
+        DeliveryOptions? options,
+        Envelope? parent = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(message);
         DateTimeOffset sentAt = DateTimeOffset.UtcNow;
@@ -42,11 +46,14 @@ public sealed class OutgoingDispatcher
             return false;
         }
 
-        _hold.Park(Build(message, sentAt, due.Value, parent));
+        await _hold.ParkAsync(Build(message, sentAt, due.Value, parent), cancellationToken);
         return true;
     }
 
-    public void Dispatch(IReadOnlyList<object> outgoing, Envelope parent)
+    public async Task DispatchAsync(
+        IReadOnlyList<object> outgoing,
+        Envelope parent,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(outgoing);
         ArgumentNullException.ThrowIfNull(parent);
@@ -54,7 +61,7 @@ public sealed class OutgoingDispatcher
         foreach (object item in outgoing)
         {
             (object message, DeliveryOptions? options) = UnwrapSchedule(item);
-            if (!TryPark(message, options, parent))
+            if (!await TryParkAsync(message, options, parent, cancellationToken))
             {
                 immediate.Add(message);
             }

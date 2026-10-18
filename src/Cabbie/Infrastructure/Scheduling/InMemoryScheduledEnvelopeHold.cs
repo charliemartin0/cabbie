@@ -1,33 +1,60 @@
 using Cabbie.Application.Scheduling;
 using Cabbie.Domain.Envelope;
-using Cabbie.Domain.Envelope.ValueObjects;
 
 namespace Cabbie.Infrastructure.Scheduling;
 
 public sealed class InMemoryScheduledEnvelopeHold : IScheduledEnvelopeHold
 {
-    private readonly List<Envelope> _held = [];
+    private readonly List<ClaimedEnvelope> _held = [];
+    private readonly Dictionary<long, ClaimedEnvelope> _claimed = [];
+    private long _nextToken;
     private bool _playing;
 
-    public IReadOnlyList<Envelope> Peek() => [.. _held];
+    /// <summary>Envelopes parked and not currently claimed, in park order.</summary>
+    public IReadOnlyList<Envelope> Peek() => [.. _held.Select(held => held.Envelope)];
 
-    public void Park(Envelope envelope)
+    public ValueTask ParkAsync(Envelope envelope, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(envelope);
-        _held.Add(envelope);
+        _held.Add(new ClaimedEnvelope(envelope, ++_nextToken));
+        return ValueTask.CompletedTask;
     }
 
-    public bool TryRemove(EnvelopeId id)
+    public ValueTask<IReadOnlyList<ClaimedEnvelope>> ClaimDueAsync(
+        DateTimeOffset asOf,
+        CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(id);
-        int index = _held.FindIndex(envelope => envelope.Id.Value == id.Value);
-        if (index < 0)
+        ClaimedEnvelope[] due =
+        [
+            .. _held
+                .Where(held => held.Envelope.DeliverBy.Value is { } at && at <= asOf)
+                .OrderBy(held => held.Envelope.DeliverBy.Value)
+        ];
+        foreach (ClaimedEnvelope claim in due)
         {
-            return false;
+            _held.Remove(claim);
+            _claimed[claim.Token] = claim;
         }
 
-        _held.RemoveAt(index);
-        return true;
+        return ValueTask.FromResult<IReadOnlyList<ClaimedEnvelope>>(due);
+    }
+
+    public ValueTask CompleteAsync(ClaimedEnvelope claim, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(claim);
+        _claimed.Remove(claim.Token);
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask ReleaseAsync(ClaimedEnvelope claim, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(claim);
+        if (_claimed.Remove(claim.Token))
+        {
+            _held.Add(claim);
+        }
+
+        return ValueTask.CompletedTask;
     }
 
     public IDisposable BeginPlay()
