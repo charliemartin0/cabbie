@@ -19,7 +19,8 @@ internal sealed class SqsListener(
     EnvelopeCodec codec,
     IReceiver receiver,
     SqsTransportOptions options,
-    ILogger logger) : IListener, IDisposable
+    ILogger logger,
+    TimeProvider timeProvider) : IListener, IDisposable
 {
     private readonly Lock _gate = new();
     private readonly CancellationTokenSource _pollCts = new();
@@ -146,6 +147,7 @@ internal sealed class SqsListener(
         try
         {
             CancellationToken pollToken = _pollCts.Token;
+            int consecutiveFailures = 0;
             while (!pollToken.IsCancellationRequested)
             {
                 IReadOnlyList<Message> batch;
@@ -167,12 +169,13 @@ internal sealed class SqsListener(
                 {
                     break;
                 }
-                catch (Exception exception) when (exception is AmazonServiceException or HttpRequestException or IOException)
+                catch (Exception exception) when (exception is not OutOfMemoryException)
                 {
+                    consecutiveFailures++;
                     SqsLog.ReceiveFailed(logger, exception, endpoint.QueueName);
                     try
                     {
-                        await Task.Delay(options.PollErrorDelay, pollToken);
+                        await Task.Delay(BackoffFor(consecutiveFailures), timeProvider, pollToken);
                     }
                     catch (OperationCanceledException)
                     {
@@ -182,6 +185,7 @@ internal sealed class SqsListener(
                     continue;
                 }
 
+                consecutiveFailures = 0;
                 await Task.WhenAll(batch.Select(ProcessAsync));
             }
         }
@@ -192,6 +196,13 @@ internal sealed class SqsListener(
                 Close();
             }
         }
+    }
+
+    // Doubles from PollErrorDelay per consecutive failure, capped at MaxPollErrorDelay.
+    private TimeSpan BackoffFor(int consecutiveFailures)
+    {
+        double factor = Math.Pow(2, Math.Min(consecutiveFailures - 1, 30));
+        return TimeSpan.FromTicks((long)Math.Min(options.PollErrorDelay.Ticks * factor, options.MaxPollErrorDelay.Ticks));
     }
 
     private async Task ProcessAsync(Message message)

@@ -140,7 +140,7 @@ public static class CabbieHostBuilderExtensions
             sender: services.GetRequiredService<TransportRouter>()));
         services.AddSingleton<IReceiver>(services => new EnvelopeReceiver(
             (envelope, cancellationToken) => services.GetRequiredService<Mediator>()
-                .DispatchHandlers(envelope, scheduled: true, cancellationToken),
+                .DispatchHandlers(envelope, scheduled: true, cancellationToken, fromTransport: true),
             services.GetService<ILogger<EnvelopeReceiver>>()));
         services.AddSingleton<LocalQueueCatalog>(services => new LocalQueueCatalog(
             services.GetRequiredService<IReceiver>(),
