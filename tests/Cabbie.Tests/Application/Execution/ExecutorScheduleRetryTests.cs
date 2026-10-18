@@ -76,7 +76,9 @@ public sealed class ExecutorScheduleRetryTests
         Assert.Contains("ScheduleRetryChargeHandler", parked[0].Handler!.Value);
         Assert.Contains("ScheduleRetrySecondHandler", parked[1].Handler!.Value);
 
-        Assert.True(hold.TryRemove(parked[0].Id));
+        var claimed = await hold.ClaimDueAsync(DateTimeOffset.UtcNow.AddYears(10));
+        await hold.CompleteAsync(claimed.Single(c => c.Envelope.Id == parked[0].Id));
+        await hold.ReleaseAsync(claimed.Single(c => c.Envelope.Id == parked[1].Id));
         var remaining = Assert.Single(hold.Peek());
         Assert.Equal(parked[1].Id, remaining.Id);
     }
