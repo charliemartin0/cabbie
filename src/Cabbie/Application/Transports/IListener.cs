@@ -3,7 +3,10 @@ namespace Cabbie.Application.Transports;
 /// <summary>
 /// Inbound half of a transport endpoint, started and stopped by the host. A listener pulls
 /// (or is pushed) envelopes from its address and passes each to its <see cref="IReceiver"/>,
-/// then acts on the <see cref="ReceiveOutcome"/>.
+/// then acts on the <see cref="ReceiveOutcome"/>. A message the transport cannot decode
+/// (<see cref="UnreadableTransportMessage"/> from <see cref="EnvelopeCodec.Decode"/>) never
+/// reaches the receiver: the listener must acknowledge it and move it to a dead-letter
+/// destination, never nack it, or the broker redelivers it forever (a hot loop on SQS).
 /// </summary>
 public interface IListener
 {

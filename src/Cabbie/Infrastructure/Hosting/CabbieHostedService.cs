@@ -88,9 +88,17 @@ public sealed class CabbieHostedService : IHostedService
         }
         finally
         {
-            LocalQueueAgent[] agents = [.. _queues.All];
-            await Task.WhenAll(agents.Select(agent => agent.DrainAsync(cancellationToken)));
-            StopCount++;
+            try
+            {
+                LocalQueueAgent[] agents = [.. _queues.All];
+                await Task.WhenAll(agents.Select(agent => agent.DrainAsync(cancellationToken)));
+            }
+            finally
+            {
+                // After the drain: running handlers may still send through the cached senders.
+                await _router.DisposeAsync();
+                StopCount++;
+            }
         }
     }
 

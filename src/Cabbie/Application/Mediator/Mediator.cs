@@ -519,5 +519,7 @@ public sealed class Mediator : IMessageBus
 
         public ValueTask SendAsync(Envelope envelope, CancellationToken cancellationToken = default) =>
             ValueTask.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

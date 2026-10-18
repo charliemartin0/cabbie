@@ -116,9 +116,11 @@ public sealed class EnvelopeCodec
         {
             body = _serializer.Deserialize(message.Body, known.ClrType);
         }
-        catch (System.Text.Json.JsonException exception)
+        catch (Exception exception)
         {
-            throw new UnreadableTransportMessage($"Body is not a valid '{typeName}': {exception.Message}");
+            throw new UnreadableTransportMessage(
+                $"Body is not a valid '{typeName}': {exception.Message}",
+                exception);
         }
 
         var custom = headers

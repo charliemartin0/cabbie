@@ -8,9 +8,17 @@ internal sealed class RecordingSender : ISender
 {
     public List<Envelope> Sent { get; } = [];
 
+    public int Disposals { get; private set; }
+
     public ValueTask SendAsync(Envelope envelope, CancellationToken cancellationToken = default)
     {
         Sent.Add(envelope);
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        Disposals++;
         return ValueTask.CompletedTask;
     }
 }
@@ -29,8 +37,11 @@ internal sealed class RecordingTransport(string scheme) : ITransport
 
     public IEnumerable<Envelope> Sent => Senders.Values.SelectMany(sender => sender.Sent);
 
+    public int SenderCreations { get; private set; }
+
     public ISender CreateSender(Uri address)
     {
+        SenderCreations++;
         if (!Senders.TryGetValue(address, out RecordingSender? sender))
         {
             sender = new RecordingSender();

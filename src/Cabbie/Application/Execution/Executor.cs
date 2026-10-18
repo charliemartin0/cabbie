@@ -142,6 +142,7 @@ public sealed class Executor
                 ? null
                 : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
             CancellationToken attemptToken = linkedCts?.Token ?? cancellationToken;
+            using IDisposable? scope = _logger.BeginScope(AttemptScope(current));
             try
             {
                 object? result = await _middleware.InvokeAsync(
@@ -291,6 +292,22 @@ public sealed class Executor
             DeliverBy = new DeliverBy(DateTimeOffset.UtcNow + retry.Delay)
         };
         _scheduled.Park(parked);
+    }
+
+    private static Dictionary<string, object> AttemptScope(Envelope envelope)
+    {
+        var scope = new Dictionary<string, object>
+        {
+            ["EnvelopeId"] = envelope.Id.Value,
+            ["CorrelationId"] = envelope.CorrelationId.Value,
+            ["ConversationId"] = envelope.ConversationId.Value,
+        };
+        if (envelope.CausationId is { } causation)
+        {
+            scope["CausationId"] = causation.Value;
+        }
+
+        return scope;
     }
 
     private static Envelope WithNextAttempt(Envelope current) =>

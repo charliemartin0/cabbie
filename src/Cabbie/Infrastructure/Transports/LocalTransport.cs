@@ -48,6 +48,8 @@ public sealed class LocalTransport : ITransport
             agent.Enqueue(codec is null ? envelope : codec.Decode(codec.Encode(envelope)));
             return ValueTask.CompletedTask;
         }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class LocalListener(Uri address, LocalQueueAgent agent) : IListener

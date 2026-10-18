@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Cabbie.Application.Transports;
 using Cabbie.Domain.Envelope.ValueObjects;
+using Microsoft.Extensions.Logging;
 
 namespace Cabbie.Infrastructure.LocalQueues;
 
@@ -14,11 +15,13 @@ public sealed class LocalQueueCatalog
 {
     private readonly ConcurrentDictionary<string, LocalQueueAgent> _agents = new(StringComparer.Ordinal);
     private readonly IReceiver _receiver;
+    private readonly ILogger<LocalQueueAgent>? _logger;
 
-    public LocalQueueCatalog(IReceiver receiver)
+    public LocalQueueCatalog(IReceiver receiver, ILogger<LocalQueueAgent>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(receiver);
         _receiver = receiver;
+        _logger = logger;
     }
 
     public IEnumerable<LocalQueueAgent> All => _agents.Values;
@@ -27,7 +30,7 @@ public sealed class LocalQueueCatalog
     {
         ArgumentNullException.ThrowIfNull(destination);
         string key = destination.Value.ToString();
-        return _agents.GetOrAdd(key, _ => new LocalQueueAgent(key, _receiver));
+        return _agents.GetOrAdd(key, _ => new LocalQueueAgent(key, _receiver, _logger));
     }
 
     /// <summary>
@@ -39,7 +42,7 @@ public sealed class LocalQueueCatalog
         ArgumentNullException.ThrowIfNull(destination);
         ArgumentNullException.ThrowIfNull(receiver);
         string key = destination.Value.ToString();
-        LocalQueueAgent agent = _agents.GetOrAdd(key, _ => new LocalQueueAgent(key, receiver));
+        LocalQueueAgent agent = _agents.GetOrAdd(key, _ => new LocalQueueAgent(key, receiver, _logger));
         return ReferenceEquals(agent.Receiver, receiver)
             ? agent
             : throw new InvalidOperationException($"Local queue '{key}' is already bound to a different receiver.");

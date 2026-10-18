@@ -114,6 +114,29 @@ public sealed class EnvelopeCodecTests
     }
 
     [Fact]
+    public void decode_wraps_any_serializer_exception_and_keeps_it_as_the_inner_exception()
+    {
+        var messageTypes = new MessageTypeCatalog();
+        messageTypes.Register(typeof(PlaceOrder));
+        var failure = new NotSupportedException("custom serializer failure");
+        var codec = new EnvelopeCodec(new ThrowingSerializer(failure), messageTypes);
+        TransportMessage wire = Codec().Encode(EnvelopeFactory.Create());
+
+        UnreadableTransportMessage error = Assert.Throws<UnreadableTransportMessage>(() => codec.Decode(wire));
+
+        Assert.Same(failure, error.InnerException);
+    }
+
+    private sealed class ThrowingSerializer(Exception failure) : Cabbie.Application.Serialization.IMessageSerializer
+    {
+        public string ContentType => "application/json";
+
+        public byte[] Serialize(object message, Type messageType) => [];
+
+        public object Deserialize(ReadOnlyMemory<byte> data, Type messageType) => throw failure;
+    }
+
+    [Fact]
     public void decode_of_a_body_that_does_not_match_the_message_type_throws_unreadable_transport_message()
     {
         EnvelopeCodec codec = Codec();

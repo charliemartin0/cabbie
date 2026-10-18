@@ -124,6 +124,23 @@ public sealed class TransportHostingTests
     }
 
     [Fact]
+    public async Task host_stop_disposes_the_senders_the_router_created()
+    {
+        var transport = new RecordingTransport("test");
+        using IHost host = Build<RoutedOrderHandler>(
+            transport,
+            options => options.PublishMessage<RoutedOrder>().To("test://orders"));
+        await host.StartAsync();
+        await host.Services.GetRequiredService<IMessageBus>().PublishAsync(new RoutedOrder(1));
+        RecordingSender sender = Assert.Single(transport.Senders.Values);
+        Assert.Equal(0, sender.Disposals);
+
+        await host.StopAsync();
+
+        Assert.Equal(1, sender.Disposals);
+    }
+
+    [Fact]
     public async Task host_start_failure_in_a_later_listener_stops_the_listeners_already_started()
     {
         var transport = new RecordingTransport("test");

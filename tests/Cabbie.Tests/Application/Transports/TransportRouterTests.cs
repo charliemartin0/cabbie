@@ -59,4 +59,84 @@ public sealed class TransportRouterTests
         RecordingSender sender = Assert.Single(alpha.Senders.Values);
         Assert.Equal(2, sender.Sent.Count);
     }
+
+    [Fact]
+    public async Task sender_is_created_once_under_concurrent_sends()
+    {
+        var transport = new SlowTransport();
+        var router = new TransportRouter([transport]);
+        var destination = new Destination(new Uri("slow://orders/"));
+
+        await Task.WhenAll(Enumerable.Range(0, 20).Select(_ =>
+            Task.Run(() => router.SendAsync(EnvelopeFactory.Create(destination: destination)).AsTask())));
+
+        Assert.Equal(1, transport.Creations);
+        Assert.Equal(20, transport.Sender.Sends);
+    }
+
+    [Fact]
+    public async Task failed_sender_creation_is_not_cached_and_is_retried_on_the_next_send()
+    {
+        var transport = new SlowTransport { FailFirst = true };
+        var router = new TransportRouter([transport]);
+        var destination = new Destination(new Uri("slow://orders/"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => router.SendAsync(EnvelopeFactory.Create(destination: destination)).AsTask());
+        await router.SendAsync(EnvelopeFactory.Create(destination: destination));
+
+        Assert.Equal(2, transport.Creations);
+        Assert.Equal(1, transport.Sender.Sends);
+    }
+
+    [Fact]
+    public async Task disposing_the_router_disposes_every_cached_sender()
+    {
+        var alpha = new RecordingTransport("alpha");
+        var router = new TransportRouter([alpha]);
+        await router.SendAsync(EnvelopeFactory.Create(destination: new Destination(new Uri("alpha://one/"))));
+        await router.SendAsync(EnvelopeFactory.Create(destination: new Destination(new Uri("alpha://two/"))));
+
+        await router.DisposeAsync();
+
+        Assert.All(alpha.Senders.Values, sender => Assert.Equal(1, sender.Disposals));
+        Assert.Equal(2, alpha.Senders.Count);
+    }
+
+    private sealed class SlowTransport : ITransport
+    {
+        private int _creations;
+
+        public CountingSender Sender { get; } = new();
+
+        public bool FailFirst { get; init; }
+
+        public int Creations => Volatile.Read(ref _creations);
+
+        public string Scheme => "slow";
+
+        public ISender CreateSender(Uri address)
+        {
+            int number = Interlocked.Increment(ref _creations);
+            Thread.Sleep(50);
+            return FailFirst && number == 1 ? throw new InvalidOperationException("no connection") : Sender;
+        }
+
+        public IListener CreateListener(Uri address, IReceiver receiver) => throw new NotSupportedException();
+    }
+
+    private sealed class CountingSender : ISender
+    {
+        private int _sends;
+
+        public int Sends => Volatile.Read(ref _sends);
+
+        public ValueTask SendAsync(Envelope envelope, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _sends);
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
 }

@@ -3,6 +3,11 @@ namespace Cabbie.Application.Transports;
 /// <summary>
 /// Names of the reserved headers <see cref="EnvelopeCodec"/> writes for envelope fields.
 /// Custom envelope headers may not start with <see cref="Prefix"/>.
+/// <para>
+/// Wire transports with attribute limits (SQS allows 10 message attributes per message) must
+/// pack the <c>cabbie-*</c> headers, for example into one attribute or the body wrapper, and
+/// unpack them before <see cref="EnvelopeCodec.Decode"/>, rather than map them one to one.
+/// </para>
 /// </summary>
 public static class EnvelopeHeaders
 {

@@ -22,6 +22,12 @@ public sealed class ObservabilityAttemptObserver : IHandlerAttemptObserver
         activity?.SetTag("cabbie.destination", envelope.Destination.Value);
         activity?.SetTag("cabbie.attempt", envelope.Attempts.Value);
         activity?.SetTag("cabbie.envelope.id", envelope.Id.Value.ToString());
+        activity?.SetTag("cabbie.correlation.id", envelope.CorrelationId.Value.ToString());
+        activity?.SetTag("cabbie.conversation.id", envelope.ConversationId.Value.ToString());
+        if (envelope.CausationId is { } causation)
+        {
+            activity?.SetTag("cabbie.causation.id", causation.Value.ToString());
+        }
 
         if (exception is null)
         {

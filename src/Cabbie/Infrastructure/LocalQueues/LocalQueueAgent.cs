@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Threading.Channels;
 using Cabbie.Application.Transports;
 using Cabbie.Domain.Envelope;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Cabbie.Infrastructure.LocalQueues;
 
@@ -17,18 +19,20 @@ public sealed class LocalQueueAgent
     private readonly Channel<Envelope> _channel = Channel.CreateUnbounded<Envelope>(
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
     private readonly IReceiver _receiver;
+    private readonly ILogger _logger;
     private volatile TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private volatile bool _paused;
     private volatile Task? _worker;
     private int _started;
 
-    public LocalQueueAgent(string name, IReceiver receiver)
+    public LocalQueueAgent(string name, IReceiver receiver, ILogger<LocalQueueAgent>? logger = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ArgumentNullException.ThrowIfNull(receiver);
         Name = name;
         _receiver = receiver;
+        _logger = logger ?? NullLogger<LocalQueueAgent>.Instance;
     }
 
     internal IReceiver Receiver => _receiver;
@@ -90,7 +94,10 @@ public sealed class LocalQueueAgent
                     ReceiveOutcome outcome = await _receiver.ReceiveAsync(envelope, CancellationToken.None);
                     if (outcome == ReceiveOutcome.Defer)
                     {
-                        _channel.Writer.TryWrite(envelope);
+                        if (!_channel.Writer.TryWrite(envelope))
+                        {
+                            LocalQueueLog.DeferredEnvelopeDropped(_logger, Name, envelope.Id.Value);
+                        }
                     }
                 }
                 catch (Exception exception)

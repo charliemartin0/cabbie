@@ -3,6 +3,8 @@ namespace Cabbie.Application.Transports;
 /// <summary>
 /// What a transport does with an envelope after <see cref="IReceiver.ReceiveAsync"/>.
 /// <see cref="Nack"/> is the zero value so an unset outcome never acknowledges.
+/// An undecodable message (<see cref="UnreadableTransportMessage"/>) has no outcome: the
+/// listener acks it and dead-letters it itself, because redelivery can never fix it.
 /// </summary>
 public enum ReceiveOutcome
 {
