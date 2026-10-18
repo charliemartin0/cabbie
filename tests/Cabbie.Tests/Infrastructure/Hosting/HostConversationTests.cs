@@ -1,4 +1,5 @@
 using Cabbie.Application.Bus;
+using Cabbie.Application.Discovery;
 using Cabbie.Application.Sagas;
 using Cabbie.Application.Tracking;
 using Cabbie.Domain.Sagas.ValueObjects;
@@ -93,6 +94,28 @@ public sealed class HostConversationTests
         Assert.Contains(logs.Messages, message => message.Contains("Receipt sent for order 1", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task custom_receipt_sender_registered_by_the_app_is_resolved_into_the_handler()
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.UseCabbie();
+        var sender = new RecordingReceiptSender();
+        builder.Services.AddSingleton<IReceiptSender>(sender);
+        using IHost host = builder.Build();
+        host.Services.GetRequiredService<HandlerCatalog>().Scan(typeof(EmailReceiptHandler));
+        await host.StartAsync();
+        try
+        {
+            await host.Services.GetRequiredService<IMessageBus>().InvokeAsync(new EmailReceipt(42));
+
+            Assert.Equal([42], sender.Sent);
+        }
+        finally
+        {
+            await host.StopAsync();
+        }
+    }
+
     private static async Task<IHost> StartedHostAsync(Action<HostApplicationBuilder>? configure = null)
     {
         var builder = Host.CreateApplicationBuilder();
@@ -152,4 +175,23 @@ public sealed class HostConversationTests
             }
         }
     }
+}
+
+public interface IReceiptSender
+{
+    void Send(int orderId);
+}
+
+public sealed class RecordingReceiptSender : IReceiptSender
+{
+    public List<int> Sent { get; } = [];
+
+    public void Send(int orderId) => Sent.Add(orderId);
+}
+
+public sealed record EmailReceipt(int OrderId);
+
+public sealed class EmailReceiptHandler(IReceiptSender sender)
+{
+    public void Handle(EmailReceipt message) => sender.Send(message.OrderId);
 }

@@ -329,8 +329,12 @@ public sealed class Executor
             throw new HandlerFault(new InvalidOperationException("ScheduleRetry requires a scheduled envelope hold."));
         }
 
+        // Own id per handler retry: fan-out retries of one envelope must not collide in the hold.
+        // CausationId keeps the link to the original envelope.
         Envelope parked = current with
         {
+            Id = new EnvelopeId(Guid.NewGuid()),
+            CausationId = new CausationId(current.Id.Value),
             Attempts = new Attempts(current.Attempts.Value + 1),
             DeliverBy = new DeliverBy(_time.GetUtcNow() + retry.Delay),
             Handler = new HandlerName(handler.Name)
