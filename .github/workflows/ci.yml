@@ -58,6 +58,7 @@ jobs:
         run: dotnet test tests/Cabbie.Aws.Tests --no-build
 
   pack:
+    needs: build-test
     name: Pack NuGet packages
     runs-on: ubuntu-latest
     timeout-minutes: 10
