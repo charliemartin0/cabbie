@@ -5,6 +5,7 @@ using Cabbie.Application.Execution;
 using Cabbie.Application.Scheduling;
 using Cabbie.Domain.Envelope;
 using Cabbie.Infrastructure.Scheduling;
+using Cabbie.Tests.Application.Transports;
 using Cabbie.Tests.Domain;
 
 namespace Cabbie.Tests.Application.Scheduling;
@@ -167,16 +168,16 @@ public sealed class MessageSchedulerTests
     public async Task publish_zero_delay_timeout_enqueues_immediately()
     {
         var hold = new InMemoryScheduledEnvelopeHold();
-        var enqueuer = new RecordingPublishEnqueuer();
+        var sender = new RecordingSender();
         IMessageBus bus = new Cabbie.Application.Mediator.Mediator(
             new HandlerCatalog(),
             hold: hold,
-            enqueuer: enqueuer);
+            sender: sender);
 
         await bus.PublishAsync(new OrderTimeout(1), new DeliveryOptions { Delay = TimeSpan.Zero });
 
         Assert.Empty(hold.Peek());
-        Envelope envelope = Assert.Single(enqueuer.Enqueued);
+        Envelope envelope = Assert.Single(sender.Sent);
         Assert.IsType<OrderTimeout>(envelope.Message.Value);
     }
 
@@ -206,13 +207,6 @@ public sealed class MessageSchedulerTests
         public List<object> Published { get; } = [];
 
         public void Publish(IReadOnlyList<object> outgoing) => Published.AddRange(outgoing);
-    }
-
-    private sealed class RecordingPublishEnqueuer : IPublishEnqueuer
-    {
-        public List<Envelope> Enqueued { get; } = [];
-
-        public void Enqueue(Envelope envelope) => Enqueued.Add(envelope);
     }
 }
 

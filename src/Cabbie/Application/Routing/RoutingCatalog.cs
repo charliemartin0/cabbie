@@ -10,6 +10,9 @@ public sealed class RoutingCatalog
 {
     private readonly Dictionary<Type, Destination> _destinations = [];
 
+    /// <summary>The explicitly routed destinations (not the per-type defaults).</summary>
+    public IEnumerable<Destination> Destinations => _destinations.Values;
+
     public PublishExpression PublishMessage<T>() => PublishMessage(typeof(T));
 
     public PublishExpression PublishMessage(Type messageType)

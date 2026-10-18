@@ -6,6 +6,7 @@ using Cabbie.Application.Discovery;
 using Cabbie.Application.Middleware;
 using Cabbie.Application.Scheduling;
 using Cabbie.Application.Tracking;
+using Cabbie.Application.Transports;
 using Cabbie.Domain.Envelope;
 using Cabbie.Domain.Envelope.ValueObjects;
 using Cabbie.Domain.Errors.ValueObjects;
@@ -28,7 +29,7 @@ public sealed class Executor
     private readonly MiddlewareCatalog _middleware;
     private readonly IScheduledEnvelopeHold? _scheduled;
     private readonly IHandlerAttemptObserver? _attempts;
-    private readonly Func<IPublishEnqueuer>? _enqueuer;
+    private readonly Func<ISender>? _sender;
     private readonly IServiceScopeFactory _scopes;
     private readonly TimeSpan? _handlerTimeout;
     private readonly ILogger<Executor> _logger;
@@ -51,7 +52,7 @@ public sealed class Executor
         MiddlewareCatalog? middleware = null,
         IScheduledEnvelopeHold? scheduled = null,
         IHandlerAttemptObserver? attempts = null,
-        Func<IPublishEnqueuer>? enqueuer = null,
+        Func<ISender>? sender = null,
         IServiceScopeFactory? scopes = null,
         TimeSpan? handlerTimeout = null,
         ILogger<Executor>? logger = null,
@@ -69,7 +70,7 @@ public sealed class Executor
         _middleware = middleware ?? new MiddlewareCatalog();
         _scheduled = scheduled;
         _attempts = attempts;
-        _enqueuer = enqueuer;
+        _sender = sender;
         _scopes = scopes ?? EmptyScopes;
         _handlerTimeout = handlerTimeout;
         _logger = logger ?? NullLogger<Executor>.Instance;
@@ -141,6 +142,7 @@ public sealed class Executor
                 ? null
                 : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
             CancellationToken attemptToken = linkedCts?.Token ?? cancellationToken;
+            using IDisposable? scope = _logger.BeginScope(AttemptScope(current));
             try
             {
                 object? result = await _middleware.InvokeAsync(
@@ -249,6 +251,8 @@ public sealed class Executor
                         ExecutorLog.DeadLetterWriteFailed(_logger, writeFailure, current.Id.Value, handler.HandlerType);
                         throw new HandlerFault(new DeadLetterWriteFailed(current.Id.Value, fault, writeFailure));
                     }
+
+                    throw new HandlerFault(fault, deadLettered: true);
                 }
 
                 throw new HandlerFault(fault);
@@ -261,12 +265,12 @@ public sealed class Executor
                 ParkScheduledRetry(current, retry);
                 return null;
             case Requeue:
-                if (_enqueuer is null)
+                if (_sender is null)
                 {
                     throw new HandlerFault(fault);
                 }
 
-                _enqueuer().Enqueue(current);
+                await _sender().SendAsync(current, cancellationToken);
                 return null;
             case Discard:
                 return null;
@@ -288,6 +292,22 @@ public sealed class Executor
             DeliverBy = new DeliverBy(DateTimeOffset.UtcNow + retry.Delay)
         };
         _scheduled.Park(parked);
+    }
+
+    private static Dictionary<string, object> AttemptScope(Envelope envelope)
+    {
+        var scope = new Dictionary<string, object>
+        {
+            ["EnvelopeId"] = envelope.Id.Value,
+            ["CorrelationId"] = envelope.CorrelationId.Value,
+            ["ConversationId"] = envelope.ConversationId.Value,
+        };
+        if (envelope.CausationId is { } causation)
+        {
+            scope["CausationId"] = causation.Value;
+        }
+
+        return scope;
     }
 
     private static Envelope WithNextAttempt(Envelope current) =>

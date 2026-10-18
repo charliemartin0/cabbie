@@ -81,7 +81,7 @@ public sealed class RoutingCatalogTests
         Assert.Throws<ArgumentNullException>(() => routing.For((Type)null!));
         Assert.Throws<ArgumentNullException>(() => routing.For((object)null!));
         Assert.Throws<ArgumentNullException>(() => routing.PublishMessage<ChargePayment>().ToLocalQueue(null!));
-        Assert.Throws<ArgumentNullException>(() => routing.PublishMessage<ChargePayment>().To(null!));
+        Assert.Throws<ArgumentNullException>(() => routing.PublishMessage<ChargePayment>().To((Uri)null!));
     }
 }
 

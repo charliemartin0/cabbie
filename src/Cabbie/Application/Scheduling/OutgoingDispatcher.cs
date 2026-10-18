@@ -94,7 +94,8 @@ public sealed class OutgoingDispatcher
             new Headers(),
             new ContentType(""),
             new Attempts(1),
-            new EnvelopeData());
+            new EnvelopeData(),
+            parent is null ? null : new CausationId(parent.Id.Value));
 
         var result = Validator.Validate(envelope);
         if (!result.IsValid)

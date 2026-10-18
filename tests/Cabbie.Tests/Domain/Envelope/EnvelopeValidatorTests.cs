@@ -129,12 +129,21 @@ public sealed class EnvelopeValidatorTests
     }
 
     [Fact]
-    public void destination_scheme_must_be_local_tcp_or_rabbitmq()
+    public void destination_scheme_is_not_restricted_because_registered_transports_decide()
     {
         var result = _validator.TestValidate(
-            EnvelopeFactory.Create(destination: new Destination(new Uri("https://example.test"))));
+            EnvelopeFactory.Create(destination: new Destination(new Uri("sqs://orders/"))));
 
-        result.ShouldHaveValidationErrorFor(envelope => envelope.Destination.Value.Scheme);
+        result.ShouldNotHaveAnyValidationErrors();
+    }
+
+    [Fact]
+    public void destination_must_be_an_absolute_uri()
+    {
+        var result = _validator.TestValidate(
+            EnvelopeFactory.Create(destination: new Destination(new Uri("orders", UriKind.Relative))));
+
+        result.ShouldHaveValidationErrorFor(envelope => envelope.Destination.Value);
     }
 
     [Fact]

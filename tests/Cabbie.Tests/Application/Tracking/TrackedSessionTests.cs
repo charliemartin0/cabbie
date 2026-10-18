@@ -11,6 +11,7 @@ using Cabbie.Domain.Sagas.ValueObjects;
 using Cabbie.Infrastructure.Sagas;
 using Cabbie.Tests.Application.Mediator;
 using Cabbie.Tests.Application.Sagas;
+using Cabbie.Tests.Application.Transports;
 using Cabbie.Tests.Domain;
 
 namespace Cabbie.Tests.Application.Tracking;
@@ -231,14 +232,14 @@ public sealed class TrackedSessionTests
     [Fact]
     public async Task untracked_publish_of_an_immediate_message_enqueues_without_a_worker()
     {
-        var enqueuer = new RecordingEnqueuer();
+        var sender = new RecordingSender();
         IMessageBus bus = new Cabbie.Application.Mediator.Mediator(
             new HandlerCatalog(),
-            enqueuer: enqueuer);
+            sender: sender);
 
         await bus.PublishAsync(new ChargePayment(1));
 
-        Assert.IsType<ChargePayment>(Assert.Single(enqueuer.Enqueued).Message.Value);
+        Assert.IsType<ChargePayment>(Assert.Single(sender.Sent).Message.Value);
     }
 
     [Fact]
@@ -317,13 +318,6 @@ public sealed class TrackedSessionTests
         var policies = new ErrorPolicyCatalog();
         policies.OnException<TimeoutException>().Retry().Retry();
         return new Cabbie.Application.Mediator.Mediator(catalog, policies: policies);
-    }
-
-    private sealed class RecordingEnqueuer : IPublishEnqueuer
-    {
-        public List<Envelope> Enqueued { get; } = [];
-
-        public void Enqueue(Envelope envelope) => Enqueued.Add(envelope);
     }
 }
 
