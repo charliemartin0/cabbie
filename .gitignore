@@ -27,6 +27,3 @@ specs/
 
 # OpenCode runtime state (queue, session, undo logs) — regenerable, not part of the repo
 .opencode/
-
-# dotnet pack output
-/artifacts/
