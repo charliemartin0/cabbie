@@ -221,7 +221,11 @@ public sealed class Mediator : IMessageBus
     /// Public InvokeAsync stays Invoke-kind and mints new ids. Internal so the local queues
     /// and transports can route saga handlers through the saga orchestration (load/save).
     /// </summary>
-    internal async Task DispatchHandlers(Envelope envelope, bool scheduled, CancellationToken cancellationToken)
+    internal async Task DispatchHandlers(
+        Envelope envelope,
+        bool scheduled,
+        CancellationToken cancellationToken,
+        bool fromTransport = false)
     {
         HandlerLookup lookup = Catalog.Lookup(envelope.Message.Value.GetType());
         if (lookup is MissingHandler)
@@ -285,7 +289,7 @@ public sealed class Mediator : IMessageBus
                 }
                 else
                 {
-                    await _delivery.InvokeAndDispatch(envelope, handler, scheduled, cancellationToken);
+                    await _delivery.InvokeAndDispatch(envelope, handler, scheduled, fromTransport, cancellationToken);
                 }
             }
             catch (HandlerFault fault)

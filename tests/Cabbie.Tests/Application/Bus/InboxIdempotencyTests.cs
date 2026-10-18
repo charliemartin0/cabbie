@@ -139,6 +139,104 @@ public sealed class InboxIdempotencyTests
     }
 
     [Fact]
+    public async Task requeued_attempt_delivered_before_the_original_returns_is_not_dropped()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<InvalidOperationException>().Requeue();
+        var sender = new ImmediateRedeliverySender();
+        InboxFlaky.FailNext = true;
+        var catalog = new HandlerCatalog();
+        catalog.Scan(typeof(FlakyHandler));
+        var delivery = new MessageDelivery(
+            catalog,
+            new Executor(policies, sender: () => sender),
+            inbox: new InMemoryMessageStore().Inbox);
+        sender.Delivery = delivery;
+
+        await delivery.Dispatch(EnvelopeFor(new InboxPing(1)), scheduled: true);
+
+        Assert.Equal(["flaky", "flaky"], InboxLog.Ran);
+    }
+
+    [Fact]
+    public async Task failed_outbox_commit_leaves_the_handler_unprocessed_for_redelivery()
+    {
+        var transaction = new CommitFailingTransaction { FailCommit = true };
+        InboxTx.Next = transaction;
+        MessageDelivery delivery = DeliveryFor([typeof(TransactionalHandler)], new InMemoryMessageStore().Inbox);
+        Envelope envelope = EnvelopeFor(new InboxPing(1));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => delivery.Dispatch(envelope, scheduled: true));
+        transaction.FailCommit = false;
+        InboxTx.Next = transaction = new CommitFailingTransaction();
+        await delivery.Dispatch(envelope, scheduled: true);
+
+        Assert.Equal(["transactional", "transactional"], InboxLog.Ran);
+        Assert.True(transaction.Committed);
+    }
+
+    [Fact]
+    public async Task committed_outbox_transaction_marks_the_handler_processed()
+    {
+        InboxTx.Next = new CommitFailingTransaction();
+        MessageDelivery delivery = DeliveryFor([typeof(TransactionalHandler)], new InMemoryMessageStore().Inbox);
+        Envelope envelope = EnvelopeFor(new InboxPing(1));
+
+        await delivery.Dispatch(envelope, scheduled: true);
+        await delivery.Dispatch(envelope, scheduled: true);
+
+        Assert.Equal(["transactional"], InboxLog.Ran);
+    }
+
+    [Fact]
+    public async Task in_process_invoke_never_touches_the_inbox_but_transport_delivery_does()
+    {
+        var inbox = new RecordingInbox();
+        var catalog = new HandlerCatalog();
+        catalog.Scan(typeof(CountingHandler));
+        var mediator = new Cabbie.Application.Mediator.Mediator(catalog, inbox: inbox);
+
+        await mediator.InvokeAsync(new InboxPing(1));
+        Assert.Equal(0, inbox.Acquired);
+
+        await mediator.DispatchHandlers(EnvelopeFor(new InboxPing(1)), scheduled: true, CancellationToken.None, fromTransport: true);
+        Assert.Equal(1, inbox.Acquired);
+    }
+
+    [Fact]
+    public async Task processed_entries_are_forgotten_after_the_retention_window()
+    {
+        var time = new ManualTimeProvider();
+        IInboxStore inbox = new InMemoryMessageStore(time, inboxRetention: TimeSpan.FromMinutes(10)).Inbox;
+        var id = new EnvelopeId(Guid.NewGuid());
+        var handler = new HandlerName("h");
+        Assert.True(await inbox.TryAcquireAsync(id, handler));
+        await inbox.MarkProcessedAsync(id, handler);
+
+        time.Advance(TimeSpan.FromMinutes(5));
+        Assert.False(await inbox.TryAcquireAsync(id, handler));
+
+        time.Advance(TimeSpan.FromMinutes(6));
+        Assert.True(await inbox.TryAcquireAsync(id, handler));
+    }
+
+    [Fact]
+    public async Task oldest_processed_entries_are_evicted_beyond_capacity()
+    {
+        IInboxStore inbox = new InMemoryMessageStore(inboxCapacity: 2).Inbox;
+        var handler = new HandlerName("h");
+        EnvelopeId[] ids = [new(Guid.NewGuid()), new(Guid.NewGuid()), new(Guid.NewGuid())];
+        foreach (EnvelopeId id in ids)
+        {
+            Assert.True(await inbox.TryAcquireAsync(id, handler));
+            await inbox.MarkProcessedAsync(id, handler);
+        }
+
+        Assert.True(await inbox.TryAcquireAsync(ids[0], handler));
+        Assert.False(await inbox.TryAcquireAsync(ids[2], handler));
+    }
+
+    [Fact]
     public async Task two_consumers_acquiring_the_same_id_and_handler_yield_one_winner()
     {
         IInboxStore inbox = new InMemoryMessageStore().Inbox;
@@ -180,6 +278,72 @@ public sealed class InboxIdempotencyTests
         EnvelopeFactory.Create(
             message: new Message(message),
             messageType: MessageTypeNaming.For(message.GetType()));
+}
+
+internal sealed class ImmediateRedeliverySender : ISender
+{
+    public MessageDelivery? Delivery { get; set; }
+
+    public async ValueTask SendAsync(Envelope envelope, CancellationToken cancellationToken = default) =>
+        await Delivery!.Dispatch(envelope, scheduled: true, cancellationToken);
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
+internal static class InboxTx
+{
+    public static IOutboxTransaction? Next { get; set; }
+}
+
+internal sealed class CommitFailingTransaction : IOutboxTransaction
+{
+    public bool FailCommit { get; set; }
+
+    public bool Committed { get; private set; }
+
+    public ValueTask StageAsync(Envelope envelope, CancellationToken ct = default) => ValueTask.CompletedTask;
+
+    public ValueTask CommitAsync(CancellationToken ct = default)
+    {
+        if (FailCommit)
+        {
+            throw new InvalidOperationException("commit failed");
+        }
+
+        Committed = true;
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask RollbackAsync(CancellationToken ct = default) => ValueTask.CompletedTask;
+}
+
+internal sealed class RecordingInbox : IInboxStore
+{
+    public int Acquired { get; private set; }
+
+    public ValueTask<bool> TryAcquireAsync(EnvelopeId id, HandlerName handler, CancellationToken ct = default)
+    {
+        Acquired++;
+        return ValueTask.FromResult(true);
+    }
+
+    public ValueTask MarkProcessedAsync(EnvelopeId id, HandlerName handler, CancellationToken ct = default) =>
+        ValueTask.CompletedTask;
+
+    public ValueTask ReleaseAsync(EnvelopeId id, HandlerName handler, CancellationToken ct = default) =>
+        ValueTask.CompletedTask;
+
+    public ValueTask<IReadOnlyList<InboxEntry>> LoadInFlightAsync(CancellationToken ct = default) =>
+        ValueTask.FromResult<IReadOnlyList<InboxEntry>>([]);
+}
+
+public sealed class TransactionalHandler
+{
+    public void Handle(InboxPing message, Envelope envelope)
+    {
+        InboxLog.Ran.Add("transactional");
+        OutboxTransactionScope.Register(envelope.Id, InboxTx.Next!);
+    }
 }
 
 internal sealed class FlakySender : ISender
