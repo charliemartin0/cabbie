@@ -40,17 +40,22 @@ jobs:
         run: |
           dotnet restore Cabbie.slnx
           dotnet restore tests/Cabbie.Tests.Postgresql
+          dotnet restore tests/Cabbie.Aws.Tests
 
       - name: Build (warnings are errors)
         run: |
           dotnet build Cabbie.slnx --no-restore
           dotnet build tests/Cabbie.Tests.Postgresql --no-restore
+          dotnet build tests/Cabbie.Aws.Tests --no-restore
 
       - name: Test
         run: dotnet test Cabbie.slnx --no-build
 
       - name: Test (Postgres adapter, Testcontainers)
         run: dotnet test tests/Cabbie.Tests.Postgresql --no-build
+
+      - name: Test (Aws adapter, LocalStack)
+        run: dotnet test tests/Cabbie.Aws.Tests --no-build
 
   format:
     name: dotnet format (changed files)
