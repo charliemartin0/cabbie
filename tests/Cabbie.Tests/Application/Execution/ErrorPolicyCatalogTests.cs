@@ -102,7 +102,7 @@ public sealed class ErrorPolicyCatalogTests
         policies.OnException<ArgumentException>().Discard();
 
         Assert.Equal(
-            [new Requeue()],
+            [new Requeue(TimeSpan.Zero)],
             Assert.IsType<FoundErrorPolicy>(policies.For(typeof(TimeoutException))).Actions);
         Assert.Equal(
             [new ScheduleRetry(TimeSpan.FromSeconds(5))],

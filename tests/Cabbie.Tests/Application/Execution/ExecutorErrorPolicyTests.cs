@@ -61,6 +61,67 @@ public sealed class ExecutorErrorPolicyTests
     }
 
     [Fact]
+    public async Task requeue_sends_the_next_attempt_tagged_with_the_failed_handler()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<TimeoutException>().Requeue();
+        var sender = new RecordingSender();
+        var executor = new Executor(policies, sender: () => sender);
+        DiscoveredHandler handler = HandlerFor<TimeoutThrowingHandler>();
+
+        await executor.InvokeAsync(ChargePaymentEnvelope(), handler);
+
+        Envelope requeued = Assert.Single(sender.Sent);
+        Assert.Equal(2, requeued.Attempts.Value);
+        Assert.Equal(new HandlerName(handler.Name), requeued.Handler);
+    }
+
+    [Fact]
+    public async Task requeue_waits_for_the_policy_delay_on_the_time_provider()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<TimeoutException>().Requeue(TimeSpan.FromSeconds(30));
+        var sender = new RecordingSender();
+        var clock = new ManualTimeProvider();
+        var executor = new Executor(policies, sender: () => sender, timeProvider: clock);
+
+        Task<object?> invocation = executor.InvokeAsync(ChargePaymentEnvelope(), HandlerFor<TimeoutThrowingHandler>());
+        clock.Advance(TimeSpan.FromSeconds(29));
+
+        Assert.False(invocation.IsCompleted);
+        Assert.Empty(sender.Sent);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await invocation.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, Assert.Single(sender.Sent).Attempts.Value);
+    }
+
+    [Fact]
+    public async Task requeue_delays_are_consumed_one_per_attempt_then_the_fault_surfaces()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<TimeoutException>().Requeue(TimeSpan.FromSeconds(5));
+        var sender = new RecordingSender();
+        var executor = new Executor(policies, sender: () => sender);
+        Envelope secondAttempt = ChargePaymentEnvelope() with { Attempts = new Attempts(2) };
+
+        await Assert.ThrowsAsync<HandlerFault>(
+            () => executor.InvokeAsync(secondAttempt, HandlerFor<TimeoutThrowingHandler>()));
+
+        Assert.Empty(sender.Sent);
+    }
+
+    [Fact]
+    public void requeue_rejects_a_negative_delay()
+    {
+        var policies = new ErrorPolicyCatalog();
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => policies.OnException<TimeoutException>().Requeue(TimeSpan.FromSeconds(-1)));
+    }
+
+    [Fact]
     public async Task unconfigured_invoke_async_fails_once_and_is_not_dead_lettered()
     {
         var errorQueue = new RecordingErrorQueue();

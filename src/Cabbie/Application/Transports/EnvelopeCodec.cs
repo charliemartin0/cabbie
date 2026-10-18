@@ -63,6 +63,11 @@ public sealed class EnvelopeCodec
             headers[EnvelopeHeaders.SagaId] = envelope.SagaId.Value;
         }
 
+        if (envelope.Handler is { } handler)
+        {
+            headers[EnvelopeHeaders.Handler] = handler.Value;
+        }
+
         if (envelope.DeliverBy.Value is { } deliverBy)
         {
             headers[EnvelopeHeaders.DeliverBy] = deliverBy.ToString("O", CultureInfo.InvariantCulture);
@@ -113,6 +118,9 @@ public sealed class EnvelopeCodec
             ? ParseTime(rawDeliverBy, EnvelopeHeaders.DeliverBy)
             : null;
         string sagaId = headers.TryGetValue(EnvelopeHeaders.SagaId, out string? rawSaga) ? rawSaga : "";
+        HandlerName? handler = headers.TryGetValue(EnvelopeHeaders.Handler, out string? rawHandler)
+            ? new HandlerName(rawHandler)
+            : null;
 
         var messageType = new MessageType(typeName);
         if (_messageTypes.Lookup(messageType) is not KnownMessageType known)
@@ -150,7 +158,8 @@ public sealed class EnvelopeCodec
             new ContentType(_serializer.ContentType),
             new Attempts(attempts),
             new EnvelopeData(message.Body),
-            causationId);
+            causationId,
+            handler);
     }
 
     private static string Required(IReadOnlyDictionary<string, string> headers, string name) =>

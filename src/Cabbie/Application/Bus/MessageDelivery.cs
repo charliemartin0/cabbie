@@ -70,10 +70,16 @@ public sealed class MessageDelivery
             return;
         }
 
-        foreach (DiscoveredHandler handler in ((FoundHandlers)lookup).Handlers)
+        IReadOnlyList<DiscoveredHandler> targets = FanOut.Select(((FoundHandlers)lookup).Handlers, envelope);
+        if (targets.Count == 0)
         {
-            await InvokeAndDispatch(envelope, handler, scheduled, cancellationToken);
+            await _executor.HandleMissingAsync(envelope, cancellationToken);
+            return;
         }
+
+        await FanOut.RunAsync(
+            targets,
+            handler => InvokeAndDispatch(envelope, handler, scheduled, cancellationToken));
     }
 
     /// <summary>

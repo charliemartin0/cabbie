@@ -1,6 +1,6 @@
 namespace Cabbie.Domain.Errors.ValueObjects;
 
 /// <summary>
-/// Put the envelope back on its queue.
+/// Re-send the envelope as the next attempt for the failed handler only, after Delay.
 /// </summary>
-public sealed record Requeue : ErrorAction;
+public sealed record Requeue(TimeSpan Delay) : ErrorAction;

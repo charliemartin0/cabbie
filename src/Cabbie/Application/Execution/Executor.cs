@@ -262,15 +262,22 @@ public sealed class Executor
                     throw new ScheduleRetryNotSupportedOnInvoke();
                 }
 
-                ParkScheduledRetry(current, retry);
+                ParkScheduledRetry(current, handler, retry);
                 return null;
-            case Requeue:
+            case Requeue requeue:
                 if (_sender is null)
                 {
                     throw new HandlerFault(fault);
                 }
 
-                await _sender().SendAsync(current, cancellationToken);
+                if (requeue.Delay > TimeSpan.Zero)
+                {
+                    await Task.Delay(requeue.Delay, _time, cancellationToken);
+                }
+
+                await _sender().SendAsync(
+                    WithNextAttempt(current) with { Handler = new HandlerName(handler.Name) },
+                    cancellationToken);
                 return null;
             case Discard:
                 return null;
@@ -279,7 +286,7 @@ public sealed class Executor
         }
     }
 
-    private void ParkScheduledRetry(Envelope current, ScheduleRetry retry)
+    private void ParkScheduledRetry(Envelope current, DiscoveredHandler handler, ScheduleRetry retry)
     {
         if (_scheduled is null)
         {
@@ -289,7 +296,8 @@ public sealed class Executor
         Envelope parked = current with
         {
             Attempts = new Attempts(current.Attempts.Value + 1),
-            DeliverBy = new DeliverBy(DateTimeOffset.UtcNow + retry.Delay)
+            DeliverBy = new DeliverBy(_time.GetUtcNow() + retry.Delay),
+            Handler = new HandlerName(handler.Name)
         };
         _scheduled.Park(parked);
     }

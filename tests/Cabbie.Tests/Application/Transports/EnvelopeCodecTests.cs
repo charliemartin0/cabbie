@@ -58,6 +58,18 @@ public sealed class EnvelopeCodecTests
     }
 
     [Fact]
+    public void handler_target_round_trips_and_is_absent_on_a_fan_out_envelope()
+    {
+        EnvelopeCodec codec = Codec();
+        Envelope fanOut = EnvelopeFactory.Create(message: new Message(new PlaceOrder(1)));
+
+        Envelope targeted = codec.Decode(codec.Encode(fanOut with { Handler = new HandlerName("App.Billing.Handle") }));
+
+        Assert.Equal(new HandlerName("App.Billing.Handle"), targeted.Handler);
+        Assert.Null(codec.Decode(codec.Encode(fanOut)).Handler);
+    }
+
+    [Fact]
     public void decode_of_a_message_type_this_host_does_not_know_throws_unreadable_transport_message()
     {
         EnvelopeCodec codec = Codec();

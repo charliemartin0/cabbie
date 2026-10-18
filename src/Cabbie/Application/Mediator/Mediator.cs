@@ -228,7 +228,15 @@ public sealed class Mediator : IMessageBus
             return;
         }
 
-        foreach (DiscoveredHandler handler in ((FoundHandlers)lookup).Handlers)
+        IReadOnlyList<DiscoveredHandler> targets = FanOut.Select(((FoundHandlers)lookup).Handlers, envelope);
+        if (targets.Count == 0)
+        {
+            await _executor.HandleMissingAsync(envelope, cancellationToken);
+            return;
+        }
+
+        List<HandlerFault>? faults = null;
+        foreach (DiscoveredHandler handler in targets)
         {
             InHandler.Value = true;
             try
@@ -278,11 +286,17 @@ public sealed class Mediator : IMessageBus
                     await _delivery.InvokeAndDispatch(envelope, handler, scheduled, cancellationToken);
                 }
             }
+            catch (HandlerFault fault)
+            {
+                (faults ??= []).Add(fault);
+            }
             finally
             {
                 InHandler.Value = false;
             }
         }
+
+        FanOut.Rethrow(faults);
     }
 
     /// <summary>
