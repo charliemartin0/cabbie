@@ -1,10 +1,11 @@
 using Amazon.Runtime;
+using Amazon.SimpleNotificationService;
 using Amazon.SQS;
 using Testcontainers.LocalStack;
 
 namespace Cabbie.Aws.Tests;
 
-/// <summary>One LocalStack (SQS only) container per test class. Dummy credentials: nothing real is ever used.</summary>
+/// <summary>One LocalStack (SQS and SNS) container per test class. Dummy credentials: nothing real is ever used.</summary>
 public sealed class LocalStackFixture : IAsyncLifetime
 {
     static LocalStackFixture()
@@ -25,7 +26,7 @@ public sealed class LocalStackFixture : IAsyncLifetime
     }
 
     private readonly LocalStackContainer _container = new LocalStackBuilder("localstack/localstack:4.4")
-        .WithEnvironment("SERVICES", "sqs")
+        .WithEnvironment("SERVICES", "sqs,sns")
         .Build();
 
     public Task InitializeAsync() => _container.StartAsync();
@@ -36,4 +37,9 @@ public sealed class LocalStackFixture : IAsyncLifetime
         new(
             new BasicAWSCredentials("test", "test"),
             new AmazonSQSConfig { ServiceURL = _container.GetConnectionString(), AuthenticationRegion = "us-east-1" });
+
+    public AmazonSimpleNotificationServiceClient CreateSnsClient() =>
+        new(
+            new BasicAWSCredentials("test", "test"),
+            new AmazonSimpleNotificationServiceConfig { ServiceURL = _container.GetConnectionString(), AuthenticationRegion = "us-east-1" });
 }
