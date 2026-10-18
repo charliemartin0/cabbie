@@ -84,7 +84,7 @@ public sealed class MessageDelivery
 
         await FanOut.RunAsync(
             targets,
-            handler => InvokeAndDispatch(envelope, handler, scheduled, cancellationToken));
+            handler => InvokeAndDispatch(envelope, handler, scheduled, useInbox: true, cancellationToken));
     }
 
     /// <summary>
@@ -100,13 +100,14 @@ public sealed class MessageDelivery
         Envelope envelope,
         DiscoveredHandler handler,
         bool scheduled = false,
+        bool useInbox = false,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(envelope);
         ArgumentNullException.ThrowIfNull(handler);
         DiscoveredHandler target = scheduled ? handler with { Scheduled = true } : handler;
 
-        if (_inbox is null)
+        if (!useInbox || _inbox is null)
         {
             await RunHandler(envelope, target, inboxKey: null, cancellationToken);
             return;
@@ -138,7 +139,18 @@ public sealed class MessageDelivery
         // a nested handler or retry may have set/cleared the ambient since.
         IOutboxTransaction? tx = null;
         bool failed = true;
+        bool handedOff = false;
+        bool released = false;
         bool markedProcessed = false;
+
+        // A requeued attempt keeps this envelope id, so its inbox row must be free before the
+        // send: a fast consumer would otherwise fail TryAcquire and ack the attempt away.
+        async ValueTask ReleaseBeforeRequeue(CancellationToken ct)
+        {
+            released = true;
+            await _inbox!.ReleaseAsync(inboxKey!.Id, inboxKey.Handler, ct);
+        }
+
         try
         {
             object? result;
@@ -148,21 +160,22 @@ public sealed class MessageDelivery
             }
             else
             {
-                bool handedOff;
-                (result, handedOff) = await _executor.InvokeTrackingHandOffAsync(envelope, target, cancellationToken);
-                if (!handedOff)
-                {
-                    // The handler finished: record it before the cascades go out, so a cascade
-                    // send failure never re-runs the handler.
-                    await _inbox!.MarkProcessedAsync(inboxKey.Id, inboxKey.Handler, cancellationToken);
-                    markedProcessed = true;
-                }
+                (result, handedOff) = await _executor.InvokeTrackingHandOffAsync(
+                    envelope, target, cancellationToken, ReleaseBeforeRequeue);
             }
 
             tx = OutboxTransactionScope.Take(envelope.Id);
             if (tx is not null)
             {
                 OutboxTransactionScope.Begin(tx);
+            }
+
+            if (inboxKey is not null && !handedOff && tx is null)
+            {
+                // No outbox transaction: record the finished handler before the cascades go out,
+                // so a cascade send failure never re-runs it.
+                await _inbox!.MarkProcessedAsync(inboxKey.Id, inboxKey.Handler, cancellationToken);
+                markedProcessed = true;
             }
 
             IReadOnlyList<object> outgoing = CascadingMessages.From(result);
@@ -185,6 +198,13 @@ public sealed class MessageDelivery
                 if (tx is not null)
                 {
                     await OutboxTransactionScope.Complete(tx, success: !failed, cancellationToken);
+                    if (!failed && inboxKey is not null && !handedOff)
+                    {
+                        // Only a committed outbox transaction counts as processed: a failed commit
+                        // rolls the handler's work back, so redelivery must run it again.
+                        await _inbox!.MarkProcessedAsync(inboxKey.Id, inboxKey.Handler, CancellationToken.None);
+                        markedProcessed = true;
+                    }
                 }
 
                 if (!failed && markedProcessed)
@@ -195,9 +215,9 @@ public sealed class MessageDelivery
             }
             finally
             {
-                if (inboxKey is not null && !markedProcessed)
+                if (inboxKey is not null && !markedProcessed && !released)
                 {
-                    // Faulted, cancelled or handed to a later attempt: let that attempt acquire again.
+                    // Faulted, cancelled or handed to a scheduled retry: let that attempt acquire again.
                     await _inbox!.ReleaseAsync(inboxKey.Id, inboxKey.Handler, CancellationToken.None);
                 }
             }

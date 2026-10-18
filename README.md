@@ -137,7 +137,7 @@ public interface IReceiver { Task<ReceiveOutcome> ReceiveAsync(Envelope envelope
 
 - A policy `Requeue(delay...)` re-sends the envelope as the next attempt for the failed handler only (the `cabbie-handler` header names it), after the policy delay, and acks the original. The local transport has no redelivery: a `Nack` is logged and the envelope dropped, as before.
 - Delivery is at-least-once, deduplicated by the inbox: `IInboxStore` records each (envelope id, handler) pair, so a redelivered envelope never re-runs a handler that already finished. A cascade send failure after handler success leaves the handler marked done; the redelivery retries only the cascades (held in process memory, lost on restart). A handler that faults, is cancelled, or hands off to a `Requeue`/`ScheduleRetry` attempt is released for the next attempt.
-- Stays in-process: `InvokeAsync`, tracked sessions, the scheduled hold and outbox staging.
+- Stays in-process: `InvokeAsync`, tracked sessions, the scheduled hold and outbox staging. These never write to the inbox; only envelopes delivered by a transport do. A handler running in an outbox transaction is marked processed only after that transaction commits. The in-memory inbox forgets processed entries after one hour or beyond 100,000 entries (oldest first).
 - Envelope validation no longer restricts destination schemes (it was a closed `local`/`tcp`/`rabbitmq` list); the registered transports decide.
 
 ### SQS
@@ -153,6 +153,7 @@ public interface IReceiver { Task<ReceiveOutcome> ReceiveAsync(Envelope envelope
 | `Nack` | `ChangeMessageVisibility` to `NackDelay` (default 5s): redelivered after that |
 | `Defer` | `ChangeMessageVisibility` to 0: visible again at once |
 
+- A failed receive (any exception except cancellation) is logged and retried after `PollErrorDelay` (default 5s), doubling per consecutive failure up to `MaxPollErrorDelay` (default 1 min); polling never stops until `StopAsync`. `SqsTransport` takes an optional `TimeProvider` for that pause.
 - `VisibilityTimeout` (default 30s) is sent with every receive. A handler that runs longer than it is redelivered while still running; the inbox dedupes, and there is no visibility heartbeat yet. A listener that dies mid-flight has its messages redelivered after the same timeout.
 - An unreadable message is never nacked: it is copied to the dead-letter queue with its body and attributes plus `cabbie-dead-letter-reason`, and the source message is deleted only after that write succeeds. If the dead-letter write fails, the source stays and is retried after the visibility timeout.
 - `StopAsync` stops polling and waits for the messages in flight; cancelling its token abandons the wait and cancels the receiver (those messages are released). Several listeners on one queue compete: each message goes to one of them.

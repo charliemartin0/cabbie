@@ -30,6 +30,24 @@ internal sealed class OutboxTestContext(DbContextOptions<OutboxTestContext> opti
     protected override void OnModelCreating(ModelBuilder modelBuilder) => modelBuilder.AddCabbieOutbox();
 }
 
+/// <summary>Completes once the hosted relay finishes its startup pass and arms its poll timer.</summary>
+internal sealed class StartupPassSignal : TimeProvider
+{
+    private readonly TaskCompletionSource _done = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task StartupPassDone => _done.Task;
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+    {
+        if (dueTime == TimeSpan.FromDays(1))
+        {
+            _done.TrySetResult();
+        }
+
+        return base.CreateTimer(callback, state, dueTime, period);
+    }
+}
+
 /// <summary>Sends, then fails once, so the relay dies between the send and the mark.</summary>
 internal sealed class CrashAfterSendSender(ISender inner) : ISender
 {
@@ -193,6 +211,58 @@ public sealed class EfOutboxTests : IClassFixture<PostgresContainerFixture>, IAs
         }
     }
 
+    [Fact]
+    public async Task unreadable_rows_beyond_the_batch_size_are_dead_lettered_and_a_later_good_row_still_relays()
+    {
+        using IHost host = await StartedHostAsync(batchSize: 3);
+        try
+        {
+            await using (OutboxTestContext seed = NewContext())
+            {
+                for (int i = 0; i < 4; i++)
+                {
+                    seed.Set<OutboxMessage>().Add(new OutboxMessage
+                    {
+                        Id = Guid.NewGuid(),
+                        Destination = "outbox-test",
+                        MessageType = "No.Such.Type",
+                        Headers = "not json",
+                        Body = [],
+                        CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-10 + i),
+                    });
+                }
+
+                await seed.SaveChangesAsync();
+            }
+
+            await PublishAsync(host, new OutboxPing("good"));
+            var relay = host.Services.GetRequiredService<OutboxRelay<OutboxTestContext>>();
+            int sent = 0;
+            for (int pass = 0; pass < 3 && sent == 0; pass++)
+            {
+                sent += await relay.RelayOnceAsync();
+            }
+
+            Assert.Equal(1, sent);
+            await DrainAsync(host);
+            Assert.Equal(["good"], OutboxPingHandler.Handled);
+            await using OutboxTestContext after = NewContext();
+            List<OutboxMessage> bad = await after.Set<OutboxMessage>()
+                .Where(message => message.MessageType == "No.Such.Type").ToListAsync();
+            Assert.Equal(4, bad.Count);
+            Assert.All(bad, row =>
+            {
+                Assert.NotNull(row.DeadLetteredAt);
+                Assert.Null(row.SentAt);
+            });
+            Assert.Equal(0, await relay.RelayOnceAsync());
+        }
+        finally
+        {
+            await host.StopAsync();
+        }
+    }
+
     private static IQueryable<OutboxMessage> PingRow(OutboxTestContext context)
     {
         string type = typeof(OutboxPing).FullName!;
@@ -202,9 +272,11 @@ public sealed class EfOutboxTests : IClassFixture<PostgresContainerFixture>, IAs
     private OutboxTestContext NewContext() => new(
         new DbContextOptionsBuilder<OutboxTestContext>().UseNpgsql(_fixture.ConnectionString).Options);
 
-    private async Task<IHost> StartedHostAsync()
+    private async Task<IHost> StartedHostAsync(int batchSize = 50)
     {
+        var signal = new StartupPassSignal();
         var builder = Host.CreateApplicationBuilder();
+        builder.Services.AddSingleton<TimeProvider>(signal);
         builder.UseCabbie(options =>
         {
             options.HandlerAssemblies.Add(typeof(OutboxPingHandler).Assembly);
@@ -216,11 +288,11 @@ public sealed class EfOutboxTests : IClassFixture<PostgresContainerFixture>, IAs
             options => options.UseNpgsql(_fixture.ConnectionString));
         // A day-long interval keeps the hosted relay from racing the passes the tests drive by hand.
         builder.Services.AddCabbieEfOutbox<OutboxTestContext>(
-            new EfOutboxRelayOptions { PollInterval = TimeSpan.FromDays(1) });
+            new EfOutboxRelayOptions { PollInterval = TimeSpan.FromDays(1), BatchSize = batchSize });
         IHost host = builder.Build();
         await host.StartAsync();
-        // The hosted relay's startup pass has nothing to send yet; wait for it so it cannot take a test's row.
-        await Task.Delay(TimeSpan.FromMilliseconds(200));
+        // The hosted relay arms its inter-pass timer only after the startup pass; wait for that so it cannot take a test's row.
+        await signal.StartupPassDone.WaitAsync(Cap);
         return host;
     }
 

@@ -21,4 +21,10 @@ public sealed class OutboxMessage
     public DateTimeOffset CreatedAt { get; set; }
 
     public DateTimeOffset? SentAt { get; set; }
+
+    /// <summary>
+    /// Set by the relay when the row cannot be decoded; the relay never selects it again. Callers add a
+    /// nullable timestamp column for it in their migration.
+    /// </summary>
+    public DateTimeOffset? DeadLetteredAt { get; set; }
 }

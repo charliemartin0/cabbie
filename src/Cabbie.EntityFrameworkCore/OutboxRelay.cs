@@ -10,7 +10,8 @@ namespace Cabbie.EntityFrameworkCore;
 /// <summary>
 /// Sends unsent outbox rows through an <see cref="ISender"/> and marks each one as it goes. A crash between
 /// a send and its mark re-sends that one row on the next pass: delivery is at-least-once, and the
-/// receiving inbox dedupes by envelope id.
+/// receiving inbox dedupes by envelope id. Rows that cannot be decoded are dead-lettered so they stop
+/// filling the batch.
 /// </summary>
 public sealed class OutboxRelay<TContext>
     where TContext : DbContext
@@ -50,7 +51,7 @@ public sealed class OutboxRelay<TContext>
         using IServiceScope scope = _scopes.CreateScope();
         TContext context = scope.ServiceProvider.GetRequiredService<TContext>();
         List<OutboxMessage> rows = await context.Set<OutboxMessage>()
-            .Where(message => message.SentAt == null)
+            .Where(message => message.SentAt == null && message.DeadLetteredAt == null)
             .OrderBy(message => message.CreatedAt)
             .ThenBy(message => message.Id)
             .Take(_batchSize)
@@ -66,6 +67,8 @@ public sealed class OutboxRelay<TContext>
             }
             catch (UnreadableTransportMessage exception)
             {
+                row.DeadLetteredAt = _time.GetUtcNow();
+                await context.SaveChangesAsync(cancellationToken);
                 OutboxRelayLog.RowUnreadable(_logger, row.Id, exception);
                 continue;
             }

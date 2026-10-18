@@ -22,6 +22,9 @@ public sealed class SqsTransportOptions
     /// <summary>Pause after a failed receive call.</summary>
     public TimeSpan PollErrorDelay { get; init; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>Cap on the receive-failure pause, which doubles from <see cref="PollErrorDelay"/> on each consecutive failure.</summary>
+    public TimeSpan MaxPollErrorDelay { get; init; } = TimeSpan.FromMinutes(1);
+
     internal void Validate()
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(VisibilityTimeout, TimeSpan.Zero);
@@ -43,6 +46,7 @@ public sealed class SqsTransportOptions
         }
 
         ArgumentOutOfRangeException.ThrowIfLessThan(PollErrorDelay, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThan(MaxPollErrorDelay, PollErrorDelay);
     }
 
     private static bool IsWholeSeconds(TimeSpan value) => value.Ticks % TimeSpan.TicksPerSecond == 0;
