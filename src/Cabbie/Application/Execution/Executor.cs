@@ -105,12 +105,13 @@ public sealed class Executor
     internal async Task<(object? Result, bool HandedOff)> InvokeTrackingHandOffAsync(
         Envelope envelope,
         DiscoveredHandler handler,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<CancellationToken, ValueTask>? beforeRequeue = null)
     {
         ArgumentNullException.ThrowIfNull(envelope);
         ArgumentNullException.ThrowIfNull(handler);
         InvocationKind kind = handler.Scheduled ? InvocationKind.Scheduled : InvocationKind.Invoke;
-        var handOff = new HandOffFlag();
+        var handOff = new HandOffFlag { BeforeRequeue = beforeRequeue };
         object? result = await InvokeCore(envelope, handler, kind, cancellationToken, handOff);
         return (result, handOff.Value);
     }
@@ -118,6 +119,12 @@ public sealed class Executor
     private sealed class HandOffFlag
     {
         internal bool Value { get; set; }
+
+        /// <summary>
+        /// Runs just before a requeued attempt (same envelope id) is sent, so the caller can free
+        /// per-envelope state the next attempt will need.
+        /// </summary>
+        internal Func<CancellationToken, ValueTask>? BeforeRequeue { get; init; }
     }
 
     private async Task<object?> InvokeCore(
@@ -300,6 +307,11 @@ public sealed class Executor
                 if (requeue.Delay > TimeSpan.Zero)
                 {
                     await Task.Delay(requeue.Delay, _time, cancellationToken);
+                }
+
+                if (handOff?.BeforeRequeue is { } beforeRequeue)
+                {
+                    await beforeRequeue(CancellationToken.None);
                 }
 
                 await _sender().SendAsync(
