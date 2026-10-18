@@ -9,8 +9,9 @@ namespace Cabbie.Application.Transports;
 public enum ReceiveOutcome
 {
     /// <summary>
-    /// The executor finished with a fault the error policy did not resolve. The transport
-    /// makes the envelope available for redelivery.
+    /// The executor finished with a fault the error policy did not resolve. A broker transport
+    /// makes the envelope available for redelivery; the local transport drops it, because the
+    /// error policy already ran and the receiver logged the fault.
     /// </summary>
     Nack = 0,
 
