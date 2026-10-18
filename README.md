@@ -214,7 +214,7 @@ A minimal getting-started sample comes with NuGet packaging (item 7).
 4. **Transport contract suite** — Done: `tests/Cabbie.Transports.Contracts` holds one abstract xUnit suite (`TransportContract`) every transport subclasses with a small fixture: round trip, ack, defer, nack, unreadable payload dead-lettered, listener stop, shared addresses, sender lifecycle and header packing. Transports declare the behaviour they may differ on (`TransportCapabilities`) and their wait times (`TransportContractTimings`). Run today against `local://` through the serialising path; `Cabbie.Aws` reuses it. The duplicate-delivery check waits for the inbox (item 5).
 5. **Handler isolation + inbox** — 5a Done: each handler in a fan-out runs, fails, retries and dead-letters on its own; a failure in one never skips or re-runs the others, and a policy `Requeue` or `ScheduleRetry` re-runs only the failed handler as the next attempt, after the policy delay. 5b Done: the inbox gives per-(envelope, handler) idempotency (in-memory and `Cabbie.Postgresql` stores), so a redelivery no longer re-runs handlers that already succeeded.
 6. **`Cabbie.Aws`** — 6a Done: the `sqs://` transport (`Cabbie.Aws`), tested against LocalStack (Testcontainers) with the shared contract suite. See [SQS](#sqs). 6b Done: the `sns://` publish transport with fan-out to raw-delivery SQS subscriptions, tested on LocalStack. See [SNS](#sns). Topology provisioning (topics, subscriptions, queue policies) stays with the caller.
-7. 7a Done: the **durable scheduler** (Postgres hold + poller, see [Scheduling](#scheduling)); then an **EF-transactional outbox + relay**, then **packaging, versioning and CI** so Storeboost can consume Cabbie, then the **Storeboost cutover** behind an `IProducerService`/`IScheduleService`-shaped facade.
+7. 7a Done: the **durable scheduler** (Postgres hold + poller, see [Scheduling](#scheduling)). 7b Done: the **EF-transactional outbox + relay** (`Cabbie.EntityFrameworkCore`: `EfOutbox<TContext>` stages rows in the caller's `DbContext` table `cabbie_ef_outbox`, committed by the caller's `SaveChanges`; `OutboxRelayService<TContext>` sends them through the transports and marks them sent, at-least-once, deduped by the inbox). Then **packaging, versioning and CI** so Storeboost can consume Cabbie, then the **Storeboost cutover** behind an `IProducerService`/`IScheduleService`-shaped facade.
 
 3 → 4 → 5 run in that order (they share `MessageDelivery` and host registration). 6 builds on 3–5.
 
@@ -230,7 +230,7 @@ A minimal getting-started sample comes with NuGet packaging (item 7).
 
 - **Build vs adopt:** keep building Cabbie, or adopt Wolverine (which ships SQS/SNS, outbox and scheduling) for the Storeboost replacement.
 - **Delays:** decided for now: the Postgres-backed scheduler. EventBridge Scheduler stays a documented alternative (SQS caps delays at 15 minutes; SNS has none).
-- **Outbox:** an EF-joined `Cabbie.EntityFrameworkCore`, or sharing the Npgsql connection and transaction with EF.
+- **Outbox:** decided for now: an EF-joined `Cabbie.EntityFrameworkCore`.
 - **"Wolverine-shaped":** a design constraint, or only inspiration.
 
 ## Inspiration
