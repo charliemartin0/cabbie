@@ -7,7 +7,11 @@
     <Project Path="src/Cabbie.RabbitMQ/Cabbie.RabbitMQ.csproj" />
     <Project Path="src/Cabbie/Cabbie.csproj" />
   </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/GettingStarted/GettingStarted.csproj" />
+  </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Cabbie.Samples.Tests/Cabbie.Samples.Tests.csproj" />
     <Project Path="tests/Cabbie.Tests.Handlers/Cabbie.Tests.Handlers.csproj" />
     <Project Path="tests/Cabbie.Transports.Contracts/Cabbie.Transports.Contracts.csproj" />
     <Project Path="tests/Cabbie.Tests.FactoryHandlers/Cabbie.Tests.FactoryHandlers.csproj" />

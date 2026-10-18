@@ -1,0 +1,9 @@
+{
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "cabbie",
+      "extra-files": ["Directory.Build.props"]
+    }
+  }
+}

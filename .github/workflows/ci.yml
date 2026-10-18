@@ -57,6 +57,32 @@ jobs:
       - name: Test (Aws adapter, LocalStack)
         run: dotnet test tests/Cabbie.Aws.Tests --no-build
 
+  pack:
+    name: Pack NuGet packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          cache: true
+          cache-dependency-path: '**/*.csproj'
+
+      - name: Restore
+        run: dotnet restore Cabbie.slnx
+
+      - name: Pack
+        run: dotnet pack Cabbie.slnx --no-restore -c Release -o artifacts/packages
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: artifacts/packages/*
+          if-no-files-found: error
+
   format:
     name: dotnet format (changed files)
     if: github.event_name == 'pull_request'

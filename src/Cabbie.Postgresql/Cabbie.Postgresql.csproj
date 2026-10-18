@@ -1,5 +1,11 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Cabbie.Postgresql</PackageId>
+    <Description>PostgreSQL durable scheduler, inbox, outbox, saga and dead-letter stores for Cabbie.</Description>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Cabbie\Cabbie.csproj" />
   </ItemGroup>
