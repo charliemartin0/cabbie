@@ -13,7 +13,7 @@ namespace Cabbie.Tests.Infrastructure.Observability;
 
 public sealed class ObservabilityAttemptObserverTests : IDisposable
 {
-    private readonly List<Activity> _activities = [];
+    private readonly System.Collections.Concurrent.ConcurrentQueue<Activity> _activities = new();
     private readonly List<long> _failureReadings = [];
     private readonly ActivityListener _activityListener;
     private readonly MeterListener _meterListener;
@@ -24,7 +24,7 @@ public sealed class ObservabilityAttemptObserverTests : IDisposable
         {
             ShouldListenTo = source => source.Name == CabbieDiagnostics.SourceName,
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
-            ActivityStopped = activity => _activities.Add(activity),
+            ActivityStopped = _activities.Enqueue,
         };
         ActivitySource.AddActivityListener(_activityListener);
 
@@ -65,7 +65,7 @@ public sealed class ObservabilityAttemptObserverTests : IDisposable
 
         observer.OnAttempt(envelope, handler, exception);
 
-        Activity activity = Assert.Single(_activities);
+        Activity activity = Assert.Single(_activities, a => (string?)a.GetTagItem("cabbie.envelope.id") == envelope.Id.Value.ToString());
         Assert.Equal("Cabbie.Handler.Attempt", activity.OperationName);
         Assert.Equal(ActivityStatusCode.Error, activity.Status);
         Assert.Contains("TimeoutException", activity.StatusDescription ?? string.Empty);
@@ -83,7 +83,7 @@ public sealed class ObservabilityAttemptObserverTests : IDisposable
 
         observer.OnAttempt(envelope, handler, exception: null);
 
-        Activity activity = Assert.Single(_activities);
+        Activity activity = Assert.Single(_activities, a => (string?)a.GetTagItem("cabbie.envelope.id") == envelope.Id.Value.ToString());
         Assert.NotEqual(ActivityStatusCode.Error, activity.Status);
         Assert.Empty(_failureReadings);
     }
@@ -97,7 +97,7 @@ public sealed class ObservabilityAttemptObserverTests : IDisposable
 
         observer.OnAttempt(envelope, handler, exception: null);
 
-        Activity activity = Assert.Single(_activities);
+        Activity activity = Assert.Single(_activities, a => (string?)a.GetTagItem("cabbie.envelope.id") == envelope.Id.Value.ToString());
         Assert.Equal(typeof(ChargePayment).FullName, activity.GetTagItem("cabbie.message.type"));
         Assert.Equal(envelope.Destination.Value.ToString(), activity.GetTagItem("cabbie.destination")?.ToString());
         Assert.Equal(envelope.Attempts.Value, activity.GetTagItem("cabbie.attempt"));
