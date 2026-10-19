@@ -8,6 +8,8 @@ namespace Cabbie.Tests.Application.Persistence;
 
 public sealed class PortContractTests
 {
+    private static readonly HandlerName Handler = new("orders.handle");
+
     [Fact]
     public async Task outbox_stage_commit_then_load_pending_returns_the_envelope()
     {
@@ -51,8 +53,8 @@ public sealed class PortContractTests
         IMessageStore store = new InMemoryMessageStore();
         var id = new EnvelopeId(Guid.NewGuid());
 
-        Assert.True(await store.Inbox.TryAcquireAsync(id));
-        Assert.False(await store.Inbox.TryAcquireAsync(id));
+        Assert.True(await store.Inbox.TryAcquireAsync(id, Handler));
+        Assert.False(await store.Inbox.TryAcquireAsync(id, Handler));
     }
 
     [Fact]
@@ -60,11 +62,11 @@ public sealed class PortContractTests
     {
         IMessageStore store = new InMemoryMessageStore();
         var id = new EnvelopeId(Guid.NewGuid());
-        Assert.True(await store.Inbox.TryAcquireAsync(id));
+        Assert.True(await store.Inbox.TryAcquireAsync(id, Handler));
 
-        await store.Inbox.ReleaseAsync(id);
+        await store.Inbox.ReleaseAsync(id, Handler);
 
-        Assert.True(await store.Inbox.TryAcquireAsync(id));
+        Assert.True(await store.Inbox.TryAcquireAsync(id, Handler));
     }
 
     [Fact]
@@ -72,11 +74,11 @@ public sealed class PortContractTests
     {
         IMessageStore store = new InMemoryMessageStore();
         var id = new EnvelopeId(Guid.NewGuid());
-        Assert.True(await store.Inbox.TryAcquireAsync(id));
+        Assert.True(await store.Inbox.TryAcquireAsync(id, Handler));
 
-        await store.Inbox.MarkProcessedAsync(id);
+        await store.Inbox.MarkProcessedAsync(id, Handler);
 
-        Assert.False(await store.Inbox.TryAcquireAsync(id));
+        Assert.False(await store.Inbox.TryAcquireAsync(id, Handler));
         Assert.Empty(await store.Inbox.LoadInFlightAsync());
     }
 

@@ -44,7 +44,7 @@ public static class PostgresSchema
     /// <summary>
     /// Create the <c>cabbie_inbox</c> table and its in-flight index if they do not already exist.
     /// <para>
-    /// Shape: <c>(id UUID PK, status TEXT CHECK IN ('in_flight','processed'),
+    /// Shape: <c>(id UUID, handler TEXT, PRIMARY KEY (id, handler), status TEXT CHECK IN ('in_flight','processed'),
     /// acquired_at TIMESTAMPTZ DEFAULT now())</c>. The status check gives TryAcquireAsync's
     /// <c>INSERT ... ON CONFLICT DO NOTHING</c> its two outcomes: a fresh in-flight row means
     /// acquired, a conflicting processed or in-flight id means already handled. The partial index
@@ -57,10 +57,28 @@ public static class PostgresSchema
 
         const string sql = """
             CREATE TABLE IF NOT EXISTS cabbie_inbox (
-                id UUID PRIMARY KEY,
+                id UUID NOT NULL,
+                handler TEXT NOT NULL,
                 status TEXT NOT NULL CHECK (status IN ('in_flight', 'processed')),
-                acquired_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (id, handler)
             );
+
+            -- Upgrade the id-only table an earlier build created: add the handler column and widen the key.
+            ALTER TABLE cabbie_inbox ADD COLUMN IF NOT EXISTS handler TEXT NOT NULL DEFAULT '';
+
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_index i
+                    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
+                    WHERE i.indrelid = 'cabbie_inbox'::regclass AND i.indisprimary AND a.attname = 'handler')
+                THEN
+                    ALTER TABLE cabbie_inbox DROP CONSTRAINT cabbie_inbox_pkey;
+                    ALTER TABLE cabbie_inbox ADD PRIMARY KEY (id, handler);
+                END IF;
+            END
+            $$;
 
             CREATE INDEX IF NOT EXISTS cabbie_inbox_in_flight_idx
                 ON cabbie_inbox (acquired_at)
