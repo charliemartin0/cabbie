@@ -1,5 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Cabbie.EntityFrameworkCore</PackageId>
+    <Description>Entity Framework Core transactional outbox and relay for Cabbie.</Description>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Cabbie\Cabbie.csproj" />
   </ItemGroup>
