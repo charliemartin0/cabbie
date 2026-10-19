@@ -189,9 +189,9 @@ public sealed class EfOutboxTests : IClassFixture<PostgresContainerFixture>, IAs
                 new CrashAfterSendSender(host.Services.GetRequiredService<TransportRouter>()),
                 host.Services.GetRequiredService<EnvelopeCodec>(),
                 TimeProvider.System,
-                new EfOutboxRelayOptions());
+                new EfOutboxRelayOptions { RetryBaseDelay = TimeSpan.Zero });
 
-            await Assert.ThrowsAsync<InvalidOperationException>(() => crashing.RelayOnceAsync());
+            Assert.Equal(0, await crashing.RelayOnceAsync());
             await using (OutboxTestContext check = NewContext())
             {
                 Assert.Null((await PingRow(check).SingleAsync()).SentAt);
@@ -263,6 +263,142 @@ public sealed class EfOutboxTests : IClassFixture<PostgresContainerFixture>, IAs
         }
     }
 
+    [Fact]
+    public async Task failing_row_does_not_block_good_rows_behind_it()
+    {
+        using IHost host = await StartedHostAsync(retryBaseDelay: TimeSpan.FromHours(1));
+        try
+        {
+            await PublishAsync(host, new OutboxPing("bad"));
+            await MakeUnroutableAsync();
+            await PublishAsync(host, new OutboxPing("good"));
+            var relay = host.Services.GetRequiredService<OutboxRelay<OutboxTestContext>>();
+
+            Assert.Equal(1, await relay.RelayOnceAsync());
+            await DrainAsync(host);
+
+            Assert.Equal(["good"], OutboxPingHandler.Handled);
+            await using OutboxTestContext after = NewContext();
+            OutboxMessage bad = await after.Set<OutboxMessage>().SingleAsync(message => message.Destination == Unroutable);
+            Assert.Equal(1, bad.Attempts);
+            Assert.Null(bad.SentAt);
+            Assert.Null(bad.DeadLetteredAt);
+        }
+        finally
+        {
+            await host.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task failed_row_waits_for_backoff_before_next_attempt()
+    {
+        using IHost host = await StartedHostAsync(retryBaseDelay: TimeSpan.FromHours(1));
+        try
+        {
+            await PublishAsync(host, new OutboxPing("bad"));
+            await MakeUnroutableAsync();
+            var relay = host.Services.GetRequiredService<OutboxRelay<OutboxTestContext>>();
+
+            Assert.Equal(0, await relay.RelayOnceAsync());
+            Assert.Equal(0, await relay.RelayOnceAsync());
+
+            await using OutboxTestContext after = NewContext();
+            OutboxMessage bad = await after.Set<OutboxMessage>().SingleAsync(message => message.Destination == Unroutable);
+            Assert.Equal(1, bad.Attempts);
+            Assert.True(bad.NextAttemptAt > DateTimeOffset.UtcNow);
+        }
+        finally
+        {
+            await host.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task row_is_dead_lettered_after_max_attempts_and_good_rows_still_relay()
+    {
+        using IHost host = await StartedHostAsync(maxAttempts: 3);
+        try
+        {
+            await PublishAsync(host, new OutboxPing("bad"));
+            await MakeUnroutableAsync();
+            var relay = host.Services.GetRequiredService<OutboxRelay<OutboxTestContext>>();
+
+            for (int pass = 0; pass < 4; pass++)
+            {
+                Assert.Equal(0, await relay.RelayOnceAsync());
+            }
+
+            await PublishAsync(host, new OutboxPing("good"));
+            Assert.Equal(1, await relay.RelayOnceAsync());
+            await DrainAsync(host);
+
+            Assert.Equal(["good"], OutboxPingHandler.Handled);
+            await using OutboxTestContext after = NewContext();
+            OutboxMessage bad = await after.Set<OutboxMessage>().SingleAsync(message => message.Destination == Unroutable);
+            Assert.NotNull(bad.DeadLetteredAt);
+            Assert.Equal(3, bad.Attempts);
+            Assert.Null(bad.SentAt);
+        }
+        finally
+        {
+            await host.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task redrive_puts_a_dead_lettered_row_back_in_the_relay()
+    {
+        using IHost host = await StartedHostAsync(maxAttempts: 1);
+        try
+        {
+            await PublishAsync(host, new OutboxPing("revived"));
+            await MakeUnroutableAsync();
+            var relay = host.Services.GetRequiredService<OutboxRelay<OutboxTestContext>>();
+            Assert.Equal(0, await relay.RelayOnceAsync());
+            await using (OutboxTestContext check = NewContext())
+            {
+                Assert.NotNull((await PingRow(check).SingleAsync()).DeadLetteredAt);
+            }
+
+            await RewriteDestinationAsync(Unroutable, "local://outbox-test");
+
+            Assert.Equal(0, await relay.RelayOnceAsync());
+            Assert.Equal(1, await relay.RedriveDeadLettersAsync());
+            Assert.Equal(0, await relay.RedriveDeadLettersAsync());
+            Assert.Equal(1, await relay.RelayOnceAsync());
+            await DrainAsync(host);
+
+            Assert.Equal(["revived"], OutboxPingHandler.Handled);
+            await using OutboxTestContext after = NewContext();
+            OutboxMessage row = await PingRow(after).SingleAsync();
+            Assert.NotNull(row.SentAt);
+            Assert.Null(row.DeadLetteredAt);
+            Assert.Equal(0, row.Attempts);
+        }
+        finally
+        {
+            await host.StopAsync();
+        }
+    }
+
+    private const string Unroutable = "nope://outbox-test";
+
+    private async Task MakeUnroutableAsync() => await RewriteDestinationAsync("local://outbox-test", Unroutable);
+
+    /// <summary>The envelope destination lives in the headers JSON, so the column and the headers change together.</summary>
+    private async Task RewriteDestinationAsync(string from, string to)
+    {
+        await using OutboxTestContext context = NewContext();
+        foreach (OutboxMessage row in await PingRow(context).ToListAsync())
+        {
+            row.Destination = to;
+            row.Headers = row.Headers.Replace(from, to, StringComparison.Ordinal);
+        }
+
+        await context.SaveChangesAsync();
+    }
+
     private static IQueryable<OutboxMessage> PingRow(OutboxTestContext context)
     {
         string type = typeof(OutboxPing).FullName!;
@@ -272,7 +408,7 @@ public sealed class EfOutboxTests : IClassFixture<PostgresContainerFixture>, IAs
     private OutboxTestContext NewContext() => new(
         new DbContextOptionsBuilder<OutboxTestContext>().UseNpgsql(_fixture.ConnectionString).Options);
 
-    private async Task<IHost> StartedHostAsync(int batchSize = 50)
+    private async Task<IHost> StartedHostAsync(int batchSize = 50, int maxAttempts = 5, TimeSpan? retryBaseDelay = null)
     {
         var signal = new StartupPassSignal();
         var builder = Host.CreateApplicationBuilder();
@@ -288,7 +424,13 @@ public sealed class EfOutboxTests : IClassFixture<PostgresContainerFixture>, IAs
             options => options.UseNpgsql(_fixture.ConnectionString));
         // A day-long interval keeps the hosted relay from racing the passes the tests drive by hand.
         builder.Services.AddCabbieEfOutbox<OutboxTestContext>(
-            new EfOutboxRelayOptions { PollInterval = TimeSpan.FromDays(1), BatchSize = batchSize });
+            new EfOutboxRelayOptions
+            {
+                PollInterval = TimeSpan.FromDays(1),
+                BatchSize = batchSize,
+                MaxAttempts = maxAttempts,
+                RetryBaseDelay = retryBaseDelay ?? TimeSpan.Zero,
+            });
         IHost host = builder.Build();
         await host.StartAsync();
         // The hosted relay arms its inter-pass timer only after the startup pass; wait for that so it cannot take a test's row.
