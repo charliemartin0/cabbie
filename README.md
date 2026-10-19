@@ -54,9 +54,10 @@ dotnet run --project samples/GettingStarted
 | `Cabbie.Postgresql` | Durable scheduler and PostgreSQL stores |
 | `Cabbie.EntityFrameworkCore` | EF Core transactional outbox and relay |
 | `Cabbie.Aws` | SQS and SNS transports |
-| `Cabbie.Http`, `Cabbie.RabbitMQ` | Scaffolds, no public API yet |
 
-All packages share one version, kept in `Directory.Build.props` and bumped by release-please release PRs. CI packs every package on each PR and uploads them as the `nuget-packages` artifact. Nothing is published to nuget.org.
+`Cabbie.Http` and `Cabbie.RabbitMQ` are scaffolds with no public API yet and are not packed.
+
+All packages share one version, kept in `Directory.Build.props` and bumped by release-please release PRs. CI packs the four packable packages on each PR and uploads them as the `nuget-packages` artifact. Nothing is published to nuget.org.
 
 ## Dependency injection
 
