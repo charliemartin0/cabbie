@@ -26,6 +26,7 @@ Cabbie is named for the driver of the hansom, the Victorian London cab — small
 - **Local queues** — in-process worker queues keyed by destination URI, behind the `local://` transport. `Pause`/`Resume` per queue, clean drain on host stop.
 - **In-memory inbox, outbox, dead-letter, and saga stores** — ports defined in Application, in-memory implementation in Infrastructure. The PostgreSQL adapter fills the durable version.
 - **JSON serialization** — `IMessageSerializer` port + `System.Text.Json` default, used at the transport boundary, content-type aware.
+- **Fan-out isolation** — handlers for one message fail, retry and dead-letter independently; `Requeue` and `ScheduleRetry` re-run only the failed handler.
 - **Transport selection by URI scheme** — `ITransport`/`ISender`/`IListener`/`IReceiver` ports, a scheme-keyed registry, `ListenTo` endpoints.
 - **Observability hooks** — `ActivitySource`, `Meter`, per-attempt observers. No exporter baked in.
 - **Handler discovery by convention** — `HandlerConvention` walks opted-in assemblies. No source generation. Handlers may take constructor dependencies; extra method parameters after the message resolve from a per-message DI scope.
@@ -117,7 +118,7 @@ public interface IReceiver { Task<ReceiveOutcome> ReceiveAsync(Envelope envelope
 | `Nack` | Fault the policy did not resolve | Make it available for redelivery |
 | `Defer` | Cancelled before the executor finished (host stopping) | Release it without counting a failure |
 
-- A policy `Requeue` re-sends the envelope to its destination and acks the original. The local transport has no redelivery: a `Nack` is logged and the envelope dropped, as before.
+- A policy `Requeue(delay...)` re-sends the envelope as the next attempt for the failed handler only (the `cabbie-handler` header names it), after the policy delay, and acks the original. The local transport has no redelivery: a `Nack` is logged and the envelope dropped, as before. Until the inbox (item 5b) a `Nack` still redelivers the whole envelope.
 - Delivery is at-least-once: handlers must be idempotent until the inbox (roadmap item 5).
 - Stays in-process: `InvokeAsync`, tracked sessions, the scheduled hold and outbox staging.
 - Envelope validation no longer restricts destination schemes (it was a closed `local`/`tcp`/`rabbitmq` list); the registered transports decide.
@@ -169,7 +170,7 @@ A minimal getting-started sample comes with NuGet packaging (item 7).
 2. **Error policy fixes** — Done: base-type exception matching, a default retry/dead-letter policy, handler timeouts, an awaited dead-letter write. See [Error policies](#error-policies).
 3. **Transport selection** — Done: endpoints are URIs, the scheme picks the transport through a registry, unknown schemes fail host start, and `ListenTo` listeners are started and stopped by the host. See [Endpoints and transports](#endpoints-and-transports).
 4. **Transport contract suite** — Done: `tests/Cabbie.Transports.Contracts` holds one abstract xUnit suite (`TransportContract`) every transport subclasses with a small fixture: round trip, ack, defer, nack, unreadable payload dead-lettered, listener stop, shared addresses, sender lifecycle and header packing. Transports declare the behaviour they may differ on (`TransportCapabilities`) and their wait times (`TransportContractTimings`). Run today against `local://` through the serialising path; `Cabbie.Aws` reuses it. The duplicate-delivery check waits for the inbox (item 5).
-5. **Handler isolation + inbox** — one failing handler no longer skips the others; redelivery re-runs only the failed handler; the inbox gives per-(envelope, handler) idempotency.
+5. **Handler isolation + inbox** — 5a Done: each handler in a fan-out runs, fails, retries and dead-letters on its own; a failure in one never skips or re-runs the others, and a policy `Requeue` or `ScheduleRetry` re-runs only the failed handler as the next attempt, after the policy delay. 5b (next): the inbox gives per-(envelope, handler) idempotency, so a Nack redelivery no longer re-runs handlers that already succeeded.
 6. **`Cabbie.Aws`** — SQS send/receive, then SNS fan-out and topology. Tested against LocalStack (Testcontainers).
 7. **Durable scheduler**, then an **EF-transactional outbox + relay**, then **packaging, versioning and CI** so Storeboost can consume Cabbie, then the **Storeboost cutover** behind an `IProducerService`/`IScheduleService`-shaped facade.
 

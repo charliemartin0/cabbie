@@ -262,15 +262,24 @@ public sealed class Executor
                     throw new ScheduleRetryNotSupportedOnInvoke();
                 }
 
-                ParkScheduledRetry(current, retry);
+                ParkScheduledRetry(current, handler, retry);
+                Bus.FanOut.NoteDiverted();
                 return null;
-            case Requeue:
+            case Requeue requeue:
                 if (_sender is null)
                 {
                     throw new HandlerFault(fault);
                 }
 
-                await _sender().SendAsync(current, cancellationToken);
+                if (requeue.Delay > TimeSpan.Zero)
+                {
+                    await Task.Delay(requeue.Delay, _time, cancellationToken);
+                }
+
+                await _sender().SendAsync(
+                    WithNextAttempt(current) with { Handler = new HandlerName(handler.Name) },
+                    cancellationToken);
+                Bus.FanOut.NoteDiverted();
                 return null;
             case Discard:
                 return null;
@@ -279,17 +288,42 @@ public sealed class Executor
         }
     }
 
-    private void ParkScheduledRetry(Envelope current, ScheduleRetry retry)
+    /// <summary>
+    /// Redeliver one handler's unresolved fault as its own envelope, so the other handlers of a
+    /// fan-out are not run again. Returns false when no sender is bound (the caller then rethrows).
+    /// </summary>
+    internal async Task<bool> RedeliverToHandlerAsync(
+        Envelope envelope,
+        DiscoveredHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (_sender is null)
+        {
+            return false;
+        }
+
+        await _sender().SendAsync(
+            WithNextAttempt(envelope) with { Handler = new HandlerName(handler.Name) },
+            cancellationToken);
+        return true;
+    }
+
+    private void ParkScheduledRetry(Envelope current, DiscoveredHandler handler, ScheduleRetry retry)
     {
         if (_scheduled is null)
         {
             throw new HandlerFault(new InvalidOperationException("ScheduleRetry requires a scheduled envelope hold."));
         }
 
+        // Own id per handler retry: fan-out retries of one envelope must not collide in the hold.
+        // CausationId keeps the link to the original envelope.
         Envelope parked = current with
         {
+            Id = new EnvelopeId(Guid.NewGuid()),
+            CausationId = new CausationId(current.Id.Value),
             Attempts = new Attempts(current.Attempts.Value + 1),
-            DeliverBy = new DeliverBy(DateTimeOffset.UtcNow + retry.Delay)
+            DeliverBy = new DeliverBy(_time.GetUtcNow() + retry.Delay),
+            Handler = new HandlerName(handler.Name)
         };
         _scheduled.Park(parked);
     }

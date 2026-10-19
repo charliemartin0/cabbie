@@ -194,7 +194,7 @@ public sealed class ExecutorMiddlewareTests
     }
 
     [Fact]
-    public async Task fan_out_wraps_each_handler_and_aborts_on_the_first_throw()
+    public async Task fan_out_wraps_each_handler_and_a_throwing_handler_does_not_skip_the_next()
     {
         var middleware = new MiddlewareCatalog();
         var inner = new RecordingMiddleware();
@@ -210,8 +210,10 @@ public sealed class ExecutorMiddlewareTests
 
         await Assert.ThrowsAsync<HandlerFault>(() => bus.InvokeAsync(new ChargePayment(1)));
 
-        Assert.Equal(typeof(ThrowingFirstFanOutHandler), Assert.Single(inner.HandlerTypes));
-        Assert.False(SecondFanOutHandler.Handled);
+        Assert.Equal(
+            [typeof(ThrowingFirstFanOutHandler), typeof(SecondFanOutHandler)],
+            inner.HandlerTypes);
+        Assert.True(SecondFanOutHandler.Handled);
     }
 
     [Fact]

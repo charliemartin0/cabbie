@@ -15,6 +15,9 @@ public sealed record DiscoveredHandler(
     Func<IServiceProvider, object?>? ResolveTarget = null,
     bool Scheduled = false)
 {
+    /// <summary>Stable per-message handler identity carried on a handler-targeted envelope.</summary>
+    public string Name => $"{HandlerType.FullName}.{Method.Name}";
+
     /// <summary>
     /// Compiled at Scan time by <see cref="HandlerInvokerCompiler"/>. Null for handlers
     /// constructed at runtime (e.g. the saga NotFound miss path) — the Executor falls
