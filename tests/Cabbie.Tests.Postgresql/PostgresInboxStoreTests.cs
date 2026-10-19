@@ -140,7 +140,7 @@ public sealed class PostgresInboxStoreTests : IClassFixture<PostgresContainerFix
     }
 
     [Fact]
-    public async Task ensure_inbox_table_upgrades_an_id_only_table_and_keeps_its_rows()
+    public async Task redelivered_pre_upgrade_envelope_is_not_acquired_again_by_any_handler()
     {
         var id = new EnvelopeId(Guid.NewGuid());
         await using (NpgsqlConnection conn = await _fixture.DataSource.OpenConnectionAsync())
@@ -164,6 +164,7 @@ public sealed class PostgresInboxStoreTests : IClassFixture<PostgresContainerFix
         await PostgresSchema.EnsureInboxTableAsync(_fixture.DataSource);
 
         Assert.False(await _store.TryAcquireAsync(id, new HandlerName(string.Empty)));
-        Assert.True(await _store.TryAcquireAsync(id, Handler));
+        Assert.False(await _store.TryAcquireAsync(id, Handler));
+        Assert.True(await _store.TryAcquireAsync(new EnvelopeId(Guid.NewGuid()), Handler));
     }
 }

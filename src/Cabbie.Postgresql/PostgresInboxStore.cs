@@ -24,6 +24,7 @@ public sealed class PostgresInboxStore : IInboxStore
     }
 
     /// <inheritdoc />
+    /// <remarks>Pre-upgrade rows carry handler '' and match any handler for that envelope id.</remarks>
     public async ValueTask<bool> TryAcquireAsync(EnvelopeId id, HandlerName handler, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(id);
@@ -31,7 +32,7 @@ public sealed class PostgresInboxStore : IInboxStore
 
         await using NpgsqlConnection conn = await _dataSource.OpenConnectionAsync(ct);
         await using NpgsqlCommand cmd = new NpgsqlCommand(
-            "INSERT INTO cabbie_inbox (id, handler, status) VALUES (@id, @handler, 'in_flight') ON CONFLICT (id, handler) DO NOTHING",
+            "INSERT INTO cabbie_inbox (id, handler, status) SELECT @id, @handler, 'in_flight' WHERE NOT EXISTS (SELECT 1 FROM cabbie_inbox WHERE id = @id AND handler = '') ON CONFLICT (id, handler) DO NOTHING",
             conn);
         cmd.Parameters.AddWithValue("id", id.Value);
         cmd.Parameters.AddWithValue("handler", handler.Value);
