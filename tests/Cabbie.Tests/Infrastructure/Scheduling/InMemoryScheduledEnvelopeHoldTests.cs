@@ -83,4 +83,20 @@ public sealed class InMemoryScheduledEnvelopeHoldTests
         Assert.Empty(await hold.ClaimDueAsync(due));
         Assert.Empty(hold.Peek());
     }
+
+    [Fact]
+    public async Task deferred_envelope_is_claimable_only_after_its_not_before_and_counts_the_failure()
+    {
+        var hold = new InMemoryScheduledEnvelopeHold();
+        DateTimeOffset due = DateTimeOffset.UtcNow.AddMinutes(-5);
+        await hold.ParkAsync(EnvelopeFactory.Create(deliverBy: due));
+        ClaimedEnvelope claim = Assert.Single(await hold.ClaimDueAsync(due));
+        DateTimeOffset notBefore = due.AddMinutes(2);
+
+        await hold.DeferAsync(claim, notBefore);
+
+        Assert.Empty(await hold.ClaimDueAsync(notBefore.AddTicks(-1)));
+        ClaimedEnvelope again = Assert.Single(await hold.ClaimDueAsync(notBefore));
+        Assert.Equal(1, again.Failures);
+    }
 }

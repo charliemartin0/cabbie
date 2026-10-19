@@ -84,7 +84,10 @@ public sealed class MessageDelivery
 
         await FanOut.RunAsync(
             targets,
-            handler => InvokeAndDispatch(envelope, handler, scheduled, useInbox: true, cancellationToken));
+            envelope,
+            _executor,
+            handler => InvokeAndDispatch(envelope, handler, scheduled, useInbox: true, cancellationToken),
+            cancellationToken);
     }
 
     /// <summary>

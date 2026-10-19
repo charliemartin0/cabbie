@@ -32,5 +32,10 @@ internal sealed class RecordingScheduledEnvelopeHold : IScheduledEnvelopeHold
     public ValueTask ReleaseAsync(ClaimedEnvelope claim, CancellationToken cancellationToken = default) =>
         _inner.ReleaseAsync(claim, cancellationToken);
 
+    public ValueTask DeferAsync(
+        ClaimedEnvelope claim,
+        DateTimeOffset notBefore,
+        CancellationToken cancellationToken = default) => _inner.DeferAsync(claim, notBefore, cancellationToken);
+
     public IDisposable BeginPlay() => _inner.BeginPlay();
 }

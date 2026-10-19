@@ -14,7 +14,9 @@ namespace Cabbie.Postgresql;
 /// <c>cabbie_scheduled</c> in their transport form and survive host restart. A claim leases due rows
 /// with <c>FOR UPDATE SKIP LOCKED</c> and a <c>locked_until</c> deadline, so concurrent pollers never
 /// receive the same row and a poller that dies mid-play releases its rows when the lease expires
-/// (at-least-once; the inbox deduplicates the redelivery).
+/// (at-least-once; the inbox deduplicates the redelivery). A failed play defers the row: <c>failures</c>
+/// counts it and <c>next_attempt_at</c> pushes it back, so claims order by
+/// <c>COALESCE(next_attempt_at, due_at)</c> and a poison row cannot starve the rows behind it.
 /// </summary>
 public sealed class PostgresScheduledEnvelopeHold : IScheduledEnvelopeHold
 {
@@ -22,11 +24,11 @@ public sealed class PostgresScheduledEnvelopeHold : IScheduledEnvelopeHold
         UPDATE cabbie_scheduled SET locked_until = @until
         WHERE seq IN (
             SELECT seq FROM cabbie_scheduled
-            WHERE due_at <= @asof AND (locked_until IS NULL OR locked_until <= @now)
-            ORDER BY due_at, seq
+            WHERE COALESCE(next_attempt_at, due_at) <= @asof AND (locked_until IS NULL OR locked_until <= @now)
+            ORDER BY COALESCE(next_attempt_at, due_at), seq
             LIMIT @n
             FOR UPDATE SKIP LOCKED)
-        RETURNING seq, due_at, headers, body
+        RETURNING seq, COALESCE(next_attempt_at, due_at), headers, body, failures
         """;
 
     private readonly NpgsqlDataSource _dataSource;
@@ -81,7 +83,7 @@ public sealed class PostgresScheduledEnvelopeHold : IScheduledEnvelopeHold
         CancellationToken cancellationToken = default)
     {
         DateTimeOffset now = _time.GetUtcNow();
-        List<(long Seq, DateTimeOffset Due, Dictionary<string, string> Headers, byte[] Body)> rows = [];
+        List<(long Seq, DateTimeOffset Due, Dictionary<string, string> Headers, byte[] Body, int Failures)> rows = [];
 
         await using (NpgsqlConnection conn = await _dataSource.OpenConnectionAsync(cancellationToken))
         await using (NpgsqlCommand cmd = new NpgsqlCommand(ClaimSql, conn))
@@ -95,16 +97,16 @@ public sealed class PostgresScheduledEnvelopeHold : IScheduledEnvelopeHold
             {
                 Dictionary<string, string> headers =
                     JsonSerializer.Deserialize<Dictionary<string, string>>(reader.GetString(2)) ?? [];
-                rows.Add((reader.GetInt64(0), reader.GetFieldValue<DateTimeOffset>(1), headers, reader.GetFieldValue<byte[]>(3)));
+                rows.Add((reader.GetInt64(0), reader.GetFieldValue<DateTimeOffset>(1), headers, reader.GetFieldValue<byte[]>(3), reader.GetInt32(4)));
             }
         }
 
         List<ClaimedEnvelope> claimed = new(rows.Count);
-        foreach ((long seq, _, Dictionary<string, string> headers, byte[] body) in rows.OrderBy(row => row.Due).ThenBy(row => row.Seq))
+        foreach ((long seq, _, Dictionary<string, string> headers, byte[] body, int failures) in rows.OrderBy(row => row.Due).ThenBy(row => row.Seq))
         {
             try
             {
-                claimed.Add(new ClaimedEnvelope(_codec.Decode(new TransportMessage(headers, body)), seq));
+                claimed.Add(new ClaimedEnvelope(_codec.Decode(new TransportMessage(headers, body)), seq, failures));
             }
             catch (UnreadableTransportMessage unreadable)
             {
@@ -136,6 +138,22 @@ public sealed class PostgresScheduledEnvelopeHold : IScheduledEnvelopeHold
             "UPDATE cabbie_scheduled SET locked_until = NULL WHERE seq = @seq",
             conn);
         cmd.Parameters.AddWithValue("seq", claim.Token);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async ValueTask DeferAsync(
+        ClaimedEnvelope claim,
+        DateTimeOffset notBefore,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(claim);
+        await using NpgsqlConnection conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using NpgsqlCommand cmd = new NpgsqlCommand(
+            "UPDATE cabbie_scheduled SET locked_until = NULL, failures = failures + 1, next_attempt_at = @notbefore WHERE seq = @seq",
+            conn);
+        cmd.Parameters.AddWithValue("seq", claim.Token);
+        cmd.Parameters.AddWithValue("notbefore", notBefore.ToUniversalTime());
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
