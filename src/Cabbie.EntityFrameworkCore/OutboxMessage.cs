@@ -23,8 +23,15 @@ public sealed class OutboxMessage
     public DateTimeOffset? SentAt { get; set; }
 
     /// <summary>
-    /// Set by the relay when the row cannot be decoded; the relay never selects it again. Callers add a
+    /// Set by the relay when the row cannot be decoded or after <see cref="EfOutboxRelayOptions.MaxAttempts"/>
+    /// failed sends; the relay never selects it again until a redrive clears it. Callers add a
     /// nullable timestamp column for it in their migration.
     /// </summary>
     public DateTimeOffset? DeadLetteredAt { get; set; }
+
+    /// <summary>Failed send attempts so far. Callers add a non-null int column (default 0).</summary>
+    public int Attempts { get; set; }
+
+    /// <summary>Earliest time the relay retries after a failed send; null means eligible now. Nullable timestamp column.</summary>
+    public DateTimeOffset? NextAttemptAt { get; set; }
 }

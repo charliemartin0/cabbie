@@ -20,6 +20,7 @@ public static class OutboxModelBuilderExtensions
             entity.Property(message => message.Headers).IsRequired();
             entity.Property(message => message.Body).IsRequired();
             entity.Property(message => message.CreatedAt).IsRequired();
+            entity.Property(message => message.Attempts).IsRequired();
             entity.HasIndex(message => new { message.SentAt, message.CreatedAt })
                 .HasDatabaseName("ix_cabbie_ef_outbox_unsent");
         });

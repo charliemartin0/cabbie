@@ -118,6 +118,38 @@ public sealed class FanOutIsolationTests
         Assert.Equal(["dead-letter"], FanOutLog.Ran);
     }
 
+    [Fact]
+    public async Task requeueing_handler_runs_once_when_another_handler_faults_unresolved()
+    {
+        var policies = new ErrorPolicyCatalog();
+        policies.OnException<InvalidOperationException>().Requeue();
+        var sender = new RecordingSender();
+        var catalog = new HandlerCatalog();
+        catalog.Scan(typeof(DeadLetterHandler));
+        catalog.Scan(typeof(UnresolvedHandler));
+        var receiver = new EnvelopeReceiver(
+            new MessageDelivery(catalog, new Executor(policies, sender: () => sender)));
+
+        ReceiveOutcome first = await receiver.ReceiveAsync(ChargePaymentEnvelope(), CancellationToken.None);
+
+        Assert.Equal(ReceiveOutcome.Ack, first);
+        Assert.Single(FanOutLog.Ran, "dead-letter");
+        Assert.Equal(2, sender.Sent.Count);
+        Assert.All(sender.Sent, sent => Assert.Equal(2, sent.Attempts.Value));
+        Assert.Equal(2, sender.Sent.Select(sent => sent.Handler).Distinct().Count());
+
+        foreach (Envelope redelivered in sender.Sent.ToList())
+        {
+            FanOutLog.Ran.Clear();
+            await receiver.ReceiveAsync(redelivered, CancellationToken.None);
+            string expected = redelivered.Handler!.Value.Contains("DeadLetterHandler", StringComparison.Ordinal)
+                ? "dead-letter"
+                : "unresolved";
+            Assert.All(FanOutLog.Ran, name => Assert.Equal(expected, name));
+            Assert.NotEmpty(FanOutLog.Ran);
+        }
+    }
+
     private static MessageDelivery DeliveryFor(
         ErrorPolicyCatalog policies,
         RecordingErrorQueue? errorQueue = null,

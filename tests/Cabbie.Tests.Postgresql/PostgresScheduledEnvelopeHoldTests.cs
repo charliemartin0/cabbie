@@ -100,6 +100,56 @@ public sealed class PostgresScheduledEnvelopeHoldTests : IClassFixture<PostgresC
     }
 
     [Fact]
+    public async Task deferred_row_is_claimable_only_after_next_attempt_and_keeps_its_failure_count()
+    {
+        PostgresScheduledEnvelopeHold hold = NewHold();
+        DateTimeOffset due = DateTimeOffset.UtcNow.AddMinutes(-10);
+        Envelope poison = NewEnvelope(new ScheduledPing(Guid.NewGuid()), due);
+        Envelope good = NewEnvelope(new ScheduledPing(Guid.NewGuid()), due.AddMinutes(1));
+        await hold.ParkAsync(poison);
+        await hold.ParkAsync(good);
+        IReadOnlyList<ClaimedEnvelope> claims = await hold.ClaimDueAsync(DateTimeOffset.UtcNow);
+        Assert.Equal([poison.Id, good.Id], claims.Select(c => c.Envelope.Id));
+        DateTimeOffset notBefore = DateTimeOffset.UtcNow.AddMinutes(30);
+
+        await hold.DeferAsync(claims[0], notBefore);
+        await hold.CompleteAsync(claims[1]);
+
+        Assert.Empty(await hold.ClaimDueAsync(notBefore.AddSeconds(-1)));
+        ClaimedEnvelope again = Assert.Single(await hold.ClaimDueAsync(notBefore));
+        Assert.Equal(poison.Id, again.Envelope.Id);
+        Assert.Equal(1, again.Failures);
+    }
+
+    [Fact]
+    public async Task ensuring_the_schema_upgrades_a_table_created_before_backoff_columns()
+    {
+        await using (NpgsqlConnection conn = await _fixture.DataSource.OpenConnectionAsync())
+        await using (NpgsqlCommand cmd = new NpgsqlCommand(
+            """
+            DROP TABLE cabbie_scheduled;
+            CREATE TABLE cabbie_scheduled (
+                seq BIGSERIAL PRIMARY KEY, id UUID NOT NULL, due_at TIMESTAMPTZ NOT NULL,
+                headers JSONB NOT NULL, body BYTEA NOT NULL, locked_until TIMESTAMPTZ NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+            CREATE INDEX cabbie_scheduled_due_idx ON cabbie_scheduled (due_at, seq);
+            """,
+            conn))
+        {
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        await PostgresSchema.EnsureScheduledTableAsync(_fixture.DataSource);
+
+        PostgresScheduledEnvelopeHold hold = NewHold();
+        DateTimeOffset due = DateTimeOffset.UtcNow.AddMinutes(-1);
+        await hold.ParkAsync(NewEnvelope(new ScheduledPing(Guid.NewGuid()), due));
+        ClaimedEnvelope claim = Assert.Single(await hold.ClaimDueAsync(DateTimeOffset.UtcNow));
+        await hold.DeferAsync(claim, DateTimeOffset.UtcNow);
+        Assert.Equal(1, Assert.Single(await hold.ClaimDueAsync(DateTimeOffset.UtcNow.AddSeconds(1))).Failures);
+    }
+
+    [Fact]
     public async Task two_pollers_never_deliver_the_same_message_twice()
     {
         DateTimeOffset due = DateTimeOffset.UtcNow.AddMinutes(-1);

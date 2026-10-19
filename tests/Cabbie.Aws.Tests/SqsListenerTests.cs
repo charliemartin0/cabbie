@@ -163,7 +163,7 @@ public sealed class SqsListenerTests(LocalStackFixture stack) : IClassFixture<Lo
             throw new InvalidOperationException("An unreadable message must not reach the receiver.");
     }
 
-    private sealed class CollectingReceiver : IReceiver
+    private sealed class CountingReceiver(ReceiveOutcome outcome) : IReceiver
     {
         private int _count;
 
@@ -172,21 +172,25 @@ public sealed class SqsListenerTests(LocalStackFixture stack) : IClassFixture<Lo
         public Task<ReceiveOutcome> ReceiveAsync(Cabbie.Domain.Envelope.Envelope envelope, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _count);
-            return Task.FromResult(ReceiveOutcome.Ack);
+            return Task.FromResult(outcome);
         }
     }
 
-    /// <summary>Throws a non-AWS exception for the first receive calls, then delegates to the real client.</summary>
+    /// <summary>Throws a chosen exception from the first calls to one client method, then delegates to the real client.</summary>
     public class FaultingSqs : DispatchProxy
     {
         private IAmazonSQS _inner = null!;
+        private string _method = "";
+        private Func<Exception> _fault = null!;
         private int _faultsLeft;
 
-        public static IAmazonSQS Wrap(IAmazonSQS inner, int faults)
+        public static IAmazonSQS Wrap(IAmazonSQS inner, string method, Func<Exception> fault, int faults)
         {
             IAmazonSQS proxy = Create<IAmazonSQS, FaultingSqs>();
             var faulting = (FaultingSqs)(object)proxy;
             faulting._inner = inner;
+            faulting._method = method;
+            faulting._fault = fault;
             faulting._faultsLeft = faults;
             return proxy;
         }
@@ -194,9 +198,9 @@ public sealed class SqsListenerTests(LocalStackFixture stack) : IClassFixture<Lo
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
             ArgumentNullException.ThrowIfNull(targetMethod);
-            if (targetMethod.Name == nameof(IAmazonSQS.ReceiveMessageAsync) && Interlocked.Decrement(ref _faultsLeft) >= 0)
+            if (targetMethod.Name == _method && Interlocked.Decrement(ref _faultsLeft) >= 0)
             {
-                throw new InvalidOperationException("simulated SDK failure");
+                throw _fault();
             }
 
             try
@@ -210,6 +214,39 @@ public sealed class SqsListenerTests(LocalStackFixture stack) : IClassFixture<Lo
         }
     }
 
+    private static Cabbie.Domain.Envelope.Envelope NewEnvelope(Uri endpoint) => new(
+        new EnvelopeId(Guid.NewGuid()),
+        new DomainMessage(new ContractMessage(1, "message 1")),
+        MessageTypeNaming.For(typeof(ContractMessage)),
+        new Destination(endpoint),
+        new CorrelationId(Guid.NewGuid()),
+        new ConversationId(Guid.NewGuid()),
+        new SagaId(""),
+        new SentAt(DateTimeOffset.UtcNow),
+        new DeliverBy(null),
+        new Headers(),
+        new ContentType(""),
+        new Attempts(1),
+        new EnvelopeData(),
+        null);
+
+    private static async Task<bool> PumpUntilAsync(FakeTimeProvider time, Func<Task<bool>> done)
+    {
+        DateTime deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await done())
+            {
+                return true;
+            }
+
+            time.Advance(TimeSpan.FromSeconds(5));
+            await Task.Delay(20);
+        }
+
+        return await done();
+    }
+
     [Fact]
     public async Task listener_keeps_polling_after_unexpected_receive_errors_and_delivers_messages()
     {
@@ -218,44 +255,109 @@ public sealed class SqsListenerTests(LocalStackFixture stack) : IClassFixture<Lo
         try
         {
             var time = new FakeTimeProvider();
-            var receiver = new CollectingReceiver();
+            var receiver = new CountingReceiver(ReceiveOutcome.Ack);
             EnvelopeCodec codec = NewCodec();
-            IListener listener = new SqsTransport(FaultingSqs.Wrap(client, faults: 2), codec, FastOptions, timeProvider: time)
-                .CreateListener(pair.Endpoint, receiver);
+            IAmazonSQS faulty = FaultingSqs.Wrap(client, nameof(IAmazonSQS.ReceiveMessageAsync), () => new InvalidOperationException("simulated SDK failure"), faults: 2);
+            IListener listener = new SqsTransport(faulty, codec, FastOptions, timeProvider: time).CreateListener(pair.Endpoint, receiver);
             await listener.StartAsync(CancellationToken.None);
             try
             {
                 ISender sender = new SqsTransport(client, codec, FastOptions).CreateSender(pair.Endpoint);
-                var envelope = new Cabbie.Domain.Envelope.Envelope(
-                    new EnvelopeId(Guid.NewGuid()),
-                    new DomainMessage(new ContractMessage(1, "message 1")),
-                    MessageTypeNaming.For(typeof(ContractMessage)),
-                    new Destination(pair.Endpoint),
-                    new CorrelationId(Guid.NewGuid()),
-                    new ConversationId(Guid.NewGuid()),
-                    new SagaId(""),
-                    new SentAt(DateTimeOffset.UtcNow),
-                    new DeliverBy(null),
-                    new Headers(),
-                    new ContentType(""),
-                    new Attempts(1),
-                    new EnvelopeData(),
-                    null);
-                await sender.SendAsync(envelope, CancellationToken.None);
+                await sender.SendAsync(NewEnvelope(pair.Endpoint), CancellationToken.None);
 
-                DateTime deadline = DateTime.UtcNow.AddSeconds(30);
-                while (receiver.Count == 0 && DateTime.UtcNow < deadline)
-                {
-                    time.Advance(TimeSpan.FromSeconds(5));
-                    await Task.Delay(20);
-                }
-
-                Assert.Equal(1, receiver.Count);
+                Assert.True(await PumpUntilAsync(time, () => Task.FromResult(receiver.Count >= 1)));
             }
             finally
             {
                 await listener.StopAsync(CancellationToken.None);
             }
+        }
+        finally
+        {
+            await pair.DeleteAsync(client);
+        }
+    }
+
+    [Theory]
+    [InlineData(nameof(IAmazonSQS.DeleteMessageAsync), "canceled")]
+    [InlineData(nameof(IAmazonSQS.DeleteMessageAsync), "disposed")]
+    [InlineData(nameof(IAmazonSQS.ChangeMessageVisibilityAsync), "canceled")]
+    [InlineData(nameof(IAmazonSQS.ChangeMessageVisibilityAsync), "disposed")]
+    [InlineData(nameof(IAmazonSQS.SendMessageAsync), "canceled")]
+    [InlineData(nameof(IAmazonSQS.SendMessageAsync), "disposed")]
+    public async Task listener_survives_non_aws_exceptions_from_delete_release_and_dead_letter(string method, string kind)
+    {
+        using AmazonSQSClient client = stack.CreateClient();
+        SqsQueuePair pair = await SqsQueuePair.CreateAsync(client);
+        try
+        {
+            var time = new FakeTimeProvider();
+            var receiver = new CountingReceiver(method == nameof(IAmazonSQS.ChangeMessageVisibilityAsync) ? ReceiveOutcome.Nack : ReceiveOutcome.Ack);
+            EnvelopeCodec codec = NewCodec();
+            Func<Exception> fault = kind == "canceled"
+                ? () => new TaskCanceledException("simulated timeout")
+                : () => new ObjectDisposedException("simulated");
+            IAmazonSQS faulty = FaultingSqs.Wrap(client, method, fault, faults: 1);
+            IListener listener = new SqsTransport(faulty, codec, FastOptions, timeProvider: time).CreateListener(pair.Endpoint, receiver);
+            await listener.StartAsync(CancellationToken.None);
+            try
+            {
+                bool survived;
+                if (method == nameof(IAmazonSQS.SendMessageAsync))
+                {
+                    await client.SendMessageAsync(new SendMessageRequest
+                    {
+                        QueueUrl = pair.QueueUrl,
+                        MessageBody = "not json",
+                        MessageAttributes = new Dictionary<string, MessageAttributeValue>
+                        {
+                            [SqsWire.HeadersAttribute] = new() { DataType = "String", StringValue = "{}" },
+                        },
+                    });
+                    survived = await PumpUntilAsync(time, async () =>
+                    {
+                        ReceiveMessageResponse response = await client.ReceiveMessageAsync(
+                            new ReceiveMessageRequest { QueueUrl = pair.DeadLetterUrl, WaitTimeSeconds = 1 });
+                        return response.Messages is { Count: > 0 };
+                    });
+                }
+                else
+                {
+                    ISender sender = new SqsTransport(client, codec, FastOptions).CreateSender(pair.Endpoint);
+                    await sender.SendAsync(NewEnvelope(pair.Endpoint), CancellationToken.None);
+
+                    // The failed delete/release leaves the message in flight; it is redelivered only if polling continues.
+                    survived = await PumpUntilAsync(time, () => Task.FromResult(receiver.Count >= 2));
+                }
+
+                Assert.True(survived);
+            }
+            finally
+            {
+                await listener.StopAsync(CancellationToken.None);
+            }
+        }
+        finally
+        {
+            await pair.DeleteAsync(client);
+        }
+    }
+
+    [Fact]
+    public async Task stopping_while_backing_off_after_a_fault_returns_promptly()
+    {
+        using AmazonSQSClient client = stack.CreateClient();
+        SqsQueuePair pair = await SqsQueuePair.CreateAsync(client);
+        try
+        {
+            var time = new FakeTimeProvider();
+            IAmazonSQS faulty = FaultingSqs.Wrap(client, nameof(IAmazonSQS.ReceiveMessageAsync), () => new TaskCanceledException("simulated"), faults: int.MaxValue);
+            IListener listener = new SqsTransport(faulty, NewCodec(), FastOptions, timeProvider: time)
+                .CreateListener(pair.Endpoint, new CountingReceiver(ReceiveOutcome.Ack));
+            await listener.StartAsync(CancellationToken.None);
+            await Task.Delay(100);
+
+            await listener.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
         }
         finally
         {
