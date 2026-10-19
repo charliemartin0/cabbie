@@ -54,7 +54,8 @@ public sealed class Mediator : IMessageBus
         RoutingCatalog? routing = null,
         ISender? sender = null,
         IHandlerAttemptObserver? attempts = null,
-        IInboxStore? inbox = null)
+        IInboxStore? inbox = null,
+        IErrorQueue? errorQueue = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         Catalog = catalog;
@@ -87,7 +88,8 @@ public sealed class Mediator : IMessageBus
         _scheduler = new MessageScheduler(
             scheduled,
             (envelope, cancellationToken) =>
-                DispatchHandlers(envelope, scheduled: true, cancellationToken));
+                DispatchHandlers(envelope, scheduled: true, cancellationToken),
+            errorQueue);
     }
 
     public Task InvokeAsync(object message, CancellationToken cancellationToken = default) =>

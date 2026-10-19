@@ -6,6 +6,7 @@ namespace Cabbie.Infrastructure.Scheduling;
 public sealed class InMemoryScheduledEnvelopeHold : IScheduledEnvelopeHold
 {
     private readonly List<ClaimedEnvelope> _held = [];
+    private readonly Dictionary<long, DateTimeOffset> _notBefore = [];
     private readonly Dictionary<long, ClaimedEnvelope> _claimed = [];
     private long _nextToken;
     private bool _playing;
@@ -27,8 +28,9 @@ public sealed class InMemoryScheduledEnvelopeHold : IScheduledEnvelopeHold
         ClaimedEnvelope[] due =
         [
             .. _held
-                .Where(held => held.Envelope.DeliverBy.Value is { } at && at <= asOf)
-                .OrderBy(held => held.Envelope.DeliverBy.Value)
+                .Where(held => EffectiveTime(held) is { } at && at <= asOf)
+                .OrderBy(EffectiveTime)
+                .ThenBy(held => held.Token)
         ];
         foreach (ClaimedEnvelope claim in due)
         {
@@ -43,6 +45,7 @@ public sealed class InMemoryScheduledEnvelopeHold : IScheduledEnvelopeHold
     {
         ArgumentNullException.ThrowIfNull(claim);
         _claimed.Remove(claim.Token);
+        _notBefore.Remove(claim.Token);
         return ValueTask.CompletedTask;
     }
 
@@ -55,6 +58,27 @@ public sealed class InMemoryScheduledEnvelopeHold : IScheduledEnvelopeHold
         }
 
         return ValueTask.CompletedTask;
+    }
+
+    public ValueTask DeferAsync(
+        ClaimedEnvelope claim,
+        DateTimeOffset notBefore,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(claim);
+        if (_claimed.Remove(claim.Token))
+        {
+            _held.Add(claim with { Failures = claim.Failures + 1 });
+            _notBefore[claim.Token] = notBefore;
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    private DateTimeOffset? EffectiveTime(ClaimedEnvelope held)
+    {
+        DateTimeOffset? due = held.Envelope.DeliverBy.Value;
+        return due is { } at && _notBefore.TryGetValue(held.Token, out DateTimeOffset later) && later > at ? later : due;
     }
 
     public IDisposable BeginPlay()
