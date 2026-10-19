@@ -297,6 +297,7 @@ public sealed class Executor
 
                 ParkScheduledRetry(current, handler, retry);
                 MarkHandedOff(handOff);
+                Bus.FanOut.NoteDiverted();
                 return null;
             case Requeue requeue:
                 if (_sender is null)
@@ -318,6 +319,7 @@ public sealed class Executor
                     WithNextAttempt(current) with { Handler = new HandlerName(handler.Name) },
                     cancellationToken);
                 MarkHandedOff(handOff);
+                Bus.FanOut.NoteDiverted();
                 return null;
             case Discard:
                 return null;
@@ -332,6 +334,26 @@ public sealed class Executor
         {
             handOff.Value = true;
         }
+    }
+
+    /// <summary>
+    /// Redeliver one handler's unresolved fault as its own envelope, so the other handlers of a
+    /// fan-out are not run again. Returns false when no sender is bound (the caller then rethrows).
+    /// </summary>
+    internal async Task<bool> RedeliverToHandlerAsync(
+        Envelope envelope,
+        DiscoveredHandler handler,
+        CancellationToken cancellationToken)
+    {
+        if (_sender is null)
+        {
+            return false;
+        }
+
+        await _sender().SendAsync(
+            WithNextAttempt(envelope) with { Handler = new HandlerName(handler.Name) },
+            cancellationToken);
+        return true;
     }
 
     private void ParkScheduledRetry(Envelope current, DiscoveredHandler handler, ScheduleRetry retry)

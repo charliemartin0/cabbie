@@ -185,8 +185,22 @@ internal sealed class SqsListener(
                     continue;
                 }
 
-                consecutiveFailures = 0;
-                await Task.WhenAll(batch.Select(ProcessAsync));
+                bool[] results = await Task.WhenAll(batch.Select(ProcessGuardedAsync));
+                if (!results.Contains(false))
+                {
+                    consecutiveFailures = 0;
+                    continue;
+                }
+
+                consecutiveFailures++;
+                try
+                {
+                    await Task.Delay(BackoffFor(consecutiveFailures), timeProvider, pollToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
         }
         finally
@@ -205,7 +219,20 @@ internal sealed class SqsListener(
         return TimeSpan.FromTicks((long)Math.Min(options.PollErrorDelay.Ticks * factor, options.MaxPollErrorDelay.Ticks));
     }
 
-    private async Task ProcessAsync(Message message)
+    private async Task<bool> ProcessGuardedAsync(Message message)
+    {
+        try
+        {
+            return await ProcessAsync(message);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            SqsLog.ProcessingFailed(logger, exception, endpoint.QueueName, message.MessageId);
+            return false;
+        }
+    }
+
+    private async Task<bool> ProcessAsync(Message message)
     {
         Envelope envelope;
         try
@@ -214,8 +241,7 @@ internal sealed class SqsListener(
         }
         catch (UnreadableTransportMessage unreadable)
         {
-            await DeadLetterAsync(message, unreadable.Message);
-            return;
+            return await DeadLetterAsync(message, unreadable.Message);
         }
 
         ReceiveOutcome outcome;
@@ -229,21 +255,15 @@ internal sealed class SqsListener(
             outcome = ReceiveOutcome.Nack;
         }
 
-        switch (outcome)
+        return outcome switch
         {
-            case ReceiveOutcome.Ack:
-                await DeleteAsync(message);
-                break;
-            case ReceiveOutcome.Defer:
-                await ReleaseAsync(message, 0);
-                break;
-            default:
-                await ReleaseAsync(message, (int)options.NackDelay.TotalSeconds);
-                break;
-        }
+            ReceiveOutcome.Ack => await DeleteAsync(message),
+            ReceiveOutcome.Defer => await ReleaseAsync(message, 0),
+            _ => await ReleaseAsync(message, (int)options.NackDelay.TotalSeconds),
+        };
     }
 
-    private async Task DeleteAsync(Message message)
+    private async Task<bool> DeleteAsync(Message message)
     {
         try
         {
@@ -251,13 +271,16 @@ internal sealed class SqsListener(
                 new DeleteMessageRequest { QueueUrl = _queueUrl, ReceiptHandle = message.ReceiptHandle },
                 CancellationToken.None);
         }
-        catch (Exception exception) when (exception is AmazonServiceException or HttpRequestException or IOException)
+        catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             SqsLog.AckFailed(logger, exception, endpoint.QueueName, message.MessageId);
+            return false;
         }
+
+        return true;
     }
 
-    private async Task ReleaseAsync(Message message, int visibilitySeconds)
+    private async Task<bool> ReleaseAsync(Message message, int visibilitySeconds)
     {
         try
         {
@@ -270,14 +293,17 @@ internal sealed class SqsListener(
                 },
                 CancellationToken.None);
         }
-        catch (Exception exception) when (exception is AmazonServiceException or HttpRequestException or IOException)
+        catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             SqsLog.ReleaseFailed(logger, exception, endpoint.QueueName, message.MessageId);
+            return false;
         }
+
+        return true;
     }
 
     // The source message is deleted only after the dead-letter write succeeded.
-    private async Task DeadLetterAsync(Message message, string reason)
+    private async Task<bool> DeadLetterAsync(Message message, string reason)
     {
         var attributes = (message.MessageAttributes ?? [])
             .Where(pair => pair.Key != SqsWire.DeadLetterReasonAttribute)
@@ -296,13 +322,13 @@ internal sealed class SqsListener(
                 new SendMessageRequest { QueueUrl = _deadLetterUrl, MessageBody = message.Body, MessageAttributes = attributes },
                 CancellationToken.None);
         }
-        catch (Exception exception) when (exception is AmazonServiceException or HttpRequestException or IOException)
+        catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             SqsLog.DeadLetterFailed(logger, exception, endpoint.QueueName, message.MessageId);
-            return;
+            return false;
         }
 
         SqsLog.DeadLettered(logger, endpoint.QueueName, message.MessageId, reason);
-        await DeleteAsync(message);
+        return await DeleteAsync(message);
     }
 }

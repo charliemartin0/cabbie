@@ -21,26 +21,83 @@ internal static class FanOut
         return all.Where(handler => handler.Name == target.Value).ToList();
     }
 
+    private static readonly AsyncLocal<Tracker?> Current = new();
+
+    /// <summary>
+    /// Called by the Executor when a handler's policy diverted its work out of this delivery
+    /// (requeued or parked a retry). A whole-envelope redelivery would then run that handler again.
+    /// </summary>
+    internal static void NoteDiverted()
+    {
+        if (Current.Value is { } tracker)
+        {
+            tracker.Diverted = true;
+        }
+    }
+
     /// <summary>
     /// Run every handler. A <see cref="HandlerFault"/> is held until the rest ran, then
     /// <see cref="Rethrow"/> decides. Any other exception, cancellation included, propagates at once.
+    /// When another handler already requeued or parked its retry, an unresolved fault must not
+    /// nack the whole envelope (that would run the diverted handler twice): the failing handler is
+    /// redelivered on its own through <see cref="Executor.RedeliverToHandlerAsync"/> instead.
     /// </summary>
-    internal static async Task RunAsync(IReadOnlyList<DiscoveredHandler> handlers, Func<DiscoveredHandler, Task> run)
+    internal static async Task RunAsync(
+        IReadOnlyList<DiscoveredHandler> handlers,
+        Envelope envelope,
+        Executor executor,
+        Func<DiscoveredHandler, Task> run,
+        CancellationToken cancellationToken)
     {
-        List<HandlerFault>? faults = null;
-        foreach (DiscoveredHandler handler in handlers)
+        var tracker = new Tracker();
+        Tracker? outer = Current.Value;
+        Current.Value = tracker;
+        List<(DiscoveredHandler Handler, HandlerFault Fault)>? faults = null;
+        try
         {
-            try
+            foreach (DiscoveredHandler handler in handlers)
             {
-                await run(handler);
-            }
-            catch (HandlerFault fault)
-            {
-                (faults ??= []).Add(fault);
+                try
+                {
+                    await run(handler);
+                }
+                catch (HandlerFault fault)
+                {
+                    (faults ??= []).Add((handler, fault));
+                }
             }
         }
+        finally
+        {
+            Current.Value = outer;
+        }
 
-        Rethrow(faults);
+        if (faults is null)
+        {
+            return;
+        }
+
+        if (tracker.Diverted && handlers.Count > 1 && envelope.Handler is null)
+        {
+            var remaining = new List<HandlerFault>();
+            foreach ((DiscoveredHandler handler, HandlerFault fault) in faults)
+            {
+                if (fault.DeadLettered || !await executor.RedeliverToHandlerAsync(envelope, handler, cancellationToken))
+                {
+                    remaining.Add(fault);
+                }
+            }
+
+            Rethrow(remaining);
+            return;
+        }
+
+        Rethrow(faults.ConvertAll(entry => entry.Fault));
+    }
+
+    private sealed class Tracker
+    {
+        public bool Diverted { get; set; }
     }
 
     /// <summary>
@@ -49,7 +106,7 @@ internal static class FanOut
     /// </summary>
     internal static void Rethrow(List<HandlerFault>? faults)
     {
-        if (faults is null)
+        if (faults is null || faults.Count == 0)
         {
             return;
         }
