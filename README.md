@@ -123,12 +123,31 @@ public interface IReceiver { Task<ReceiveOutcome> ReceiveAsync(Envelope envelope
 - Stays in-process: `InvokeAsync`, tracked sessions, the scheduled hold and outbox staging. These never write to the inbox; only envelopes delivered by a transport do. A handler running in an outbox transaction is marked processed only after that transaction commits. The in-memory inbox forgets processed entries after one hour or beyond 100,000 entries (oldest first).
 - Envelope validation no longer restricts destination schemes (it was a closed `local`/`tcp`/`rabbitmq` list); the registered transports decide.
 
+### SQS
+
+`Cabbie.Aws` owns the `sqs` scheme: `new SqsTransport(IAmazonSQS client, EnvelopeCodec codec, SqsTransportOptions? options = null, ILoggerFactory? loggerFactory = null)`, registered like any `ITransport`.
+
+- Address: `sqs://<queue-name>/`. The name is the URI host, so it is lowercase (1-70 letters, digits, hyphens). The queue and its dead-letter queue `<queue-name>-dead-letter` must already exist; the transport creates nothing and never disposes the client you give it. `StartAsync` on a missing queue throws the SDK's `QueueDoesNotExistException`.
+- Headers: SQS allows 10 message attributes, so every header (the `cabbie-*` ones and custom ones) travels as one JSON object in the `cabbie-headers` attribute. The body is sent as text when it is valid SQS text, otherwise as base64 with `cabbie-body-encoding = base64`.
+
+| Outcome | SQS call |
+|---|---|
+| `Ack` | `DeleteMessage` |
+| `Nack` | `ChangeMessageVisibility` to `NackDelay` (default 5s): redelivered after that |
+| `Defer` | `ChangeMessageVisibility` to 0: visible again at once |
+
+- A failed receive (any exception except cancellation) is logged and retried after `PollErrorDelay` (default 5s), doubling per consecutive failure up to `MaxPollErrorDelay` (default 1 min); polling never stops until `StopAsync`. `SqsTransport` takes an optional `TimeProvider` for that pause.
+- `VisibilityTimeout` (default 30s) is sent with every receive. A handler that runs longer than it is redelivered while still running; the inbox dedupes, and there is no visibility heartbeat yet. A listener that dies mid-flight has its messages redelivered after the same timeout.
+- An unreadable message is never nacked: it is copied to the dead-letter queue with its body and attributes plus `cabbie-dead-letter-reason`, and the source message is deleted only after that write succeeds. If the dead-letter write fails, the source stays and is retried after the visibility timeout.
+- `StopAsync` stops polling and waits for the messages in flight; cancelling its token abandons the wait and cancels the receiver (those messages are released). Several listeners on one queue compete: each message goes to one of them.
+- LocalStack tests (`tests/Cabbie.Aws.Tests`) need Docker and are not part of `Cabbie.slnx`: `dotnet test tests/Cabbie.Aws.Tests`.
+
 ## Architecture
 
 Cabbie is onion. The kernel does not know about brokers, databases, or HTTP. Adapters reference the kernel; the kernel never references adapters.
 
 ```
-src/Cabbie.Postgresql  src/Cabbie.RabbitMQ  src/Cabbie.Http
+src/Cabbie.Postgresql  src/Cabbie.RabbitMQ  src/Cabbie.Http  src/Cabbie.Aws
                    │
                    ▼
               src/Cabbie
@@ -142,7 +161,7 @@ src/Cabbie.Postgresql  src/Cabbie.RabbitMQ  src/Cabbie.Http
 | Domain | `src/Cabbie/Domain/` | nothing outer | I/O, handlers, reflection catalogs, adapter packages |
 | Application | `src/Cabbie/Application/` | Domain | Npgsql, Rabbit, HTTP, EF |
 | Infrastructure | `src/Cabbie/Infrastructure/` | Application ports | adapter package refs |
-| Adapters | `Cabbie.{Postgresql, RabbitMQ, Http}` | Cabbie core | leaking broker/DB types into core |
+| Adapters | `Cabbie.{Postgresql, RabbitMQ, Http, Aws}` | Cabbie core | leaking broker/DB types into core |
 
 ## Project Structure
 
@@ -155,10 +174,12 @@ Cabbie/
   src/Cabbie.Postgresql/         persistence adapter (shipped)
   src/Cabbie.RabbitMQ/           broker adapter (scaffold)
   src/Cabbie.Http/               HTTP front door (scaffold)
+  src/Cabbie.Aws/                AWS adapter: SQS transport (shipped)
+  tests/Cabbie.Aws.Tests/        SQS against LocalStack (Docker): runs the shared contract suite
   tests/Cabbie.Tests/            xUnit facts, small fakes
 ```
 
-`src/Cabbie` does not `ProjectReference` the adapter projects. Npgsql stays in `Cabbie.Postgresql`; Rabbit in `Cabbie.RabbitMQ`; HTTP in `Cabbie.Http`. The dependency direction is enforced by project rules, not by convention.
+`src/Cabbie` does not `ProjectReference` the adapter projects. Npgsql stays in `Cabbie.Postgresql`; Rabbit in `Cabbie.RabbitMQ`; HTTP in `Cabbie.Http`; the AWS SDK in `Cabbie.Aws`. The dependency direction is enforced by project rules, not by convention.
 
 ## Roadmap
 
@@ -171,7 +192,7 @@ A minimal getting-started sample comes with NuGet packaging (item 7).
 3. **Transport selection** — Done: endpoints are URIs, the scheme picks the transport through a registry, unknown schemes fail host start, and `ListenTo` listeners are started and stopped by the host. See [Endpoints and transports](#endpoints-and-transports).
 4. **Transport contract suite** — Done: `tests/Cabbie.Transports.Contracts` holds one abstract xUnit suite (`TransportContract`) every transport subclasses with a small fixture: round trip, ack, defer, nack, unreadable payload dead-lettered, listener stop, shared addresses, sender lifecycle and header packing. Transports declare the behaviour they may differ on (`TransportCapabilities`) and their wait times (`TransportContractTimings`). Run today against `local://` through the serialising path; `Cabbie.Aws` reuses it. The duplicate-delivery check waits for the inbox (item 5).
 5. **Handler isolation + inbox** — 5a Done: each handler in a fan-out runs, fails, retries and dead-letters on its own; a failure in one never skips or re-runs the others, and a policy `Requeue` or `ScheduleRetry` re-runs only the failed handler as the next attempt, after the policy delay. 5b Done: the inbox gives per-(envelope, handler) idempotency (in-memory and `Cabbie.Postgresql` stores), so a redelivery no longer re-runs handlers that already succeeded.
-6. **`Cabbie.Aws`** — SQS send/receive, then SNS fan-out and topology. Tested against LocalStack (Testcontainers).
+6. **`Cabbie.Aws`** — 6a Done: the `sqs://` transport (`Cabbie.Aws`), tested against LocalStack (Testcontainers) with the shared contract suite. See [SQS](#sqs). 6b pending: SNS fan-out and topology.
 7. **Durable scheduler**, then an **EF-transactional outbox + relay**, then **packaging, versioning and CI** so Storeboost can consume Cabbie, then the **Storeboost cutover** behind an `IProducerService`/`IScheduleService`-shaped facade.
 
 3 → 4 → 5 run in that order (they share `MessageDelivery` and host registration). 6 builds on 3–5.
