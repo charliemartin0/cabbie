@@ -21,4 +21,7 @@ internal static partial class SqsLog
 
     [LoggerMessage(EventId = 105, Level = LogLevel.Error, Message = "Dead-lettering SQS message {MessageId} from {Queue} failed; the source message is kept and will be retried")]
     public static partial void DeadLetterFailed(ILogger logger, Exception exception, string queue, string messageId);
+
+    [LoggerMessage(EventId = 106, Level = LogLevel.Error, Message = "Processing SQS message {MessageId} from {Queue} failed unexpectedly; the message is left for redelivery")]
+    public static partial void ProcessingFailed(ILogger logger, Exception exception, string queue, string messageId);
 }
