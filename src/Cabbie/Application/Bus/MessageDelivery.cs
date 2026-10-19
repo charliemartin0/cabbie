@@ -79,7 +79,10 @@ public sealed class MessageDelivery
 
         await FanOut.RunAsync(
             targets,
-            handler => InvokeAndDispatch(envelope, handler, scheduled, cancellationToken));
+            envelope,
+            _executor,
+            handler => InvokeAndDispatch(envelope, handler, scheduled, cancellationToken),
+            cancellationToken);
     }
 
     /// <summary>
