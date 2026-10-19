@@ -53,7 +53,7 @@ public sealed class MessageSchedulerTests
         var catalog = new HandlerCatalog();
         catalog.Scan(typeof(FlakyScheduledTimeoutHandler));
         var executor = new Executor(policies, scheduled: hold);
-        hold.Park(TimeoutEnvelope());
+        await hold.ParkAsync(TimeoutEnvelope());
         var scheduler = new MessageScheduler(new MessageDelivery(catalog, executor, hold), hold);
 
         await scheduler.PlayDue(DateTimeOffset.UtcNow.AddYears(10));
@@ -71,7 +71,7 @@ public sealed class MessageSchedulerTests
         var executor = new Executor(new ErrorPolicyCatalog(), scheduled: hold);
         var scheduler = new MessageScheduler(new MessageDelivery(catalog, executor, hold), hold);
 
-        hold.Park(TimeoutEnvelope(DateTimeOffset.UtcNow.AddHours(1)));
+        await hold.ParkAsync(TimeoutEnvelope(DateTimeOffset.UtcNow.AddHours(1)));
 
         await scheduler.PlayDue(DateTimeOffset.UtcNow);
 
@@ -79,7 +79,7 @@ public sealed class MessageSchedulerTests
     }
 
     [Fact]
-    public async Task play_due_fail_fast_leaves_unstarted_snapshot_members_held()
+    public async Task a_handler_fault_does_not_stop_later_due_rows_in_the_batch()
     {
         var hold = new InMemoryScheduledEnvelopeHold();
         var catalog = new HandlerCatalog();
@@ -89,14 +89,13 @@ public sealed class MessageSchedulerTests
         var executor = new Executor(policies, scheduled: hold);
         var scheduler = new MessageScheduler(new MessageDelivery(catalog, executor, hold), hold);
         DateTimeOffset due = DateTimeOffset.UtcNow.AddMinutes(-1);
-        hold.Park(TimeoutEnvelope(due, orderId: 1));
-        hold.Park(TimeoutEnvelope(due, orderId: 2));
+        await hold.ParkAsync(TimeoutEnvelope(due, orderId: 1));
+        await hold.ParkAsync(TimeoutEnvelope(due, orderId: 2));
 
         await Assert.ThrowsAsync<HandlerFault>(() => scheduler.PlayDue(DateTimeOffset.UtcNow));
 
-        Assert.Equal([1], FailingThenPendingTimeoutHandler.Seen);
-        var remaining = Assert.Single(hold.Peek());
-        Assert.Equal(2, ((OrderTimeout)remaining.Message.Value).OrderId);
+        Assert.Equal([1, 2], FailingThenPendingTimeoutHandler.Seen);
+        Assert.Empty(hold.Peek());
     }
 
     [Fact]
@@ -121,7 +120,7 @@ public sealed class MessageSchedulerTests
         catalog.Scan(typeof(PlayedTimeoutHandler));
         var executor = new Executor(new ErrorPolicyCatalog(), scheduled: hold);
         var scheduler = new MessageScheduler(new MessageDelivery(catalog, executor, hold), hold);
-        hold.Park(TimeoutEnvelope());
+        await hold.ParkAsync(TimeoutEnvelope());
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
 
@@ -194,6 +193,143 @@ public sealed class MessageSchedulerTests
 
         Assert.Empty(hold.Peek());
         Assert.Empty(cascades.Published);
+    }
+
+    [Fact]
+    public async Task dispatch_failure_outside_the_error_policy_keeps_the_row_and_retries_it_after_its_backoff()
+    {
+        var hold = new InMemoryScheduledEnvelopeHold();
+        await hold.ParkAsync(TimeoutEnvelope());
+        int calls = 0;
+        var scheduler = new MessageScheduler(hold, (_, _) =>
+        {
+            if (++calls == 1)
+            {
+                throw new InvalidOperationException("inbox unavailable");
+            }
+
+            return Task.CompletedTask;
+        });
+        DateTimeOffset asOf = DateTimeOffset.UtcNow.AddYears(10);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => scheduler.PlayDue(asOf));
+        Assert.Single(hold.Peek());
+
+        await scheduler.PlayDue(asOf.AddMinutes(10));
+
+        Assert.Equal(2, calls);
+        Assert.Empty(hold.Peek());
+    }
+
+    [Fact]
+    public async Task good_rows_behind_a_poison_row_still_play_in_the_same_tick()
+    {
+        var hold = new InMemoryScheduledEnvelopeHold();
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        await hold.ParkAsync(TimeoutEnvelope(now.AddMinutes(-3), orderId: 666));
+        await hold.ParkAsync(TimeoutEnvelope(now.AddMinutes(-2), orderId: 1));
+        await hold.ParkAsync(TimeoutEnvelope(now.AddMinutes(-1), orderId: 2));
+        List<int> played = [];
+        var scheduler = new MessageScheduler(hold, (envelope, _) =>
+        {
+            int id = ((OrderTimeout)envelope.Message.Value).OrderId;
+            if (id == 666)
+            {
+                throw new InvalidOperationException("poison");
+            }
+
+            played.Add(id);
+            return Task.CompletedTask;
+        });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => scheduler.PlayDue(now));
+
+        Assert.Equal([1, 2], played);
+        OrderTimeout left = Assert.IsType<OrderTimeout>(Assert.Single(hold.Peek()).Message.Value);
+        Assert.Equal(666, left.OrderId);
+    }
+
+    [Fact]
+    public async Task poison_row_is_not_retried_before_its_backoff_elapses_and_backs_off_further()
+    {
+        var hold = new InMemoryScheduledEnvelopeHold();
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        await hold.ParkAsync(TimeoutEnvelope(now.AddMinutes(-1)));
+        int calls = 0;
+        var retry = new ScheduledRetryPolicy { InitialBackoff = TimeSpan.FromSeconds(10), MaxBackoff = TimeSpan.FromMinutes(1) };
+        var scheduler = new MessageScheduler(hold, (_, _) =>
+        {
+            calls++;
+            throw new InvalidOperationException("poison");
+        }, retry: retry);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => scheduler.PlayDue(now));
+        await scheduler.PlayDue(now.AddSeconds(9));
+        Assert.Equal(1, calls);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => scheduler.PlayDue(now.AddSeconds(10)));
+        Assert.Equal(2, calls);
+
+        await scheduler.PlayDue(now.AddSeconds(10 + 19));
+        Assert.Equal(2, calls);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => scheduler.PlayDue(now.AddSeconds(10 + 20)));
+        Assert.Equal(3, calls);
+    }
+
+    [Fact]
+    public async Task poison_row_is_dead_lettered_with_its_failure_after_max_attempts()
+    {
+        var hold = new InMemoryScheduledEnvelopeHold();
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        Envelope poison = TimeoutEnvelope(now.AddMinutes(-1));
+        await hold.ParkAsync(poison);
+        var errors = new CauseRecordingErrorQueue();
+        var retry = new ScheduledRetryPolicy { MaxAttempts = 3, InitialBackoff = TimeSpan.FromSeconds(1), MaxBackoff = TimeSpan.FromSeconds(1) };
+        int calls = 0;
+        var scheduler = new MessageScheduler(hold, (_, _) =>
+        {
+            calls++;
+            throw new InvalidOperationException("poison");
+        }, errors, retry);
+
+        for (int i = 1; i <= 3; i++)
+        {
+            Assert.Empty(errors.Moved);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => scheduler.PlayDue(now.AddMinutes(i)));
+        }
+
+        (Envelope moved, Exception cause) = Assert.Single(errors.Moved);
+        Assert.Equal(poison.Id, moved.Id);
+        Assert.Equal("poison", cause.Message);
+        Assert.Empty(hold.Peek());
+
+        await scheduler.PlayDue(now.AddHours(1));
+        Assert.Equal(3, calls);
+    }
+
+    [Fact]
+    public async Task without_an_error_queue_a_poison_row_is_kept_and_keeps_backing_off()
+    {
+        var hold = new InMemoryScheduledEnvelopeHold();
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        await hold.ParkAsync(TimeoutEnvelope(now.AddMinutes(-1)));
+        var scheduler = new MessageScheduler(hold, (_, _) => throw new InvalidOperationException("poison"),
+            retry: new ScheduledRetryPolicy { MaxAttempts = 1 });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => scheduler.PlayDue(now));
+
+        Assert.Single(hold.Peek());
+    }
+
+    private sealed class CauseRecordingErrorQueue : IErrorQueue
+    {
+        public List<(Envelope Envelope, Exception Cause)> Moved { get; } = [];
+
+        public ValueTask MoveAsync(Envelope envelope, Exception cause, CancellationToken cancellationToken = default)
+        {
+            Moved.Add((envelope, cause));
+            return ValueTask.CompletedTask;
+        }
     }
 
     private static Envelope TimeoutEnvelope(DateTimeOffset? deliverBy = null, int orderId = 1) =>

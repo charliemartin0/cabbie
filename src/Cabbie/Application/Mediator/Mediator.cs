@@ -54,7 +54,8 @@ public sealed class Mediator : IMessageBus
         RoutingCatalog? routing = null,
         ISender? sender = null,
         IHandlerAttemptObserver? attempts = null,
-        IInboxStore? inbox = null)
+        IInboxStore? inbox = null,
+        IErrorQueue? errorQueue = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         Catalog = catalog;
@@ -87,7 +88,8 @@ public sealed class Mediator : IMessageBus
         _scheduler = new MessageScheduler(
             scheduled,
             (envelope, cancellationToken) =>
-                DispatchHandlers(envelope, scheduled: true, cancellationToken));
+                DispatchHandlers(envelope, scheduled: true, cancellationToken),
+            errorQueue);
     }
 
     public Task InvokeAsync(object message, CancellationToken cancellationToken = default) =>
@@ -108,7 +110,7 @@ public sealed class Mediator : IMessageBus
     public Task PublishAsync(object message, CancellationToken cancellationToken = default) =>
         PublishAsync(message, new DeliveryOptions(), cancellationToken);
 
-    public Task PublishAsync(
+    public async Task PublishAsync(
         object message,
         DeliveryOptions options,
         CancellationToken cancellationToken = default)
@@ -116,12 +118,12 @@ public sealed class Mediator : IMessageBus
         ArgumentNullException.ThrowIfNull(message);
         ArgumentNullException.ThrowIfNull(options);
         cancellationToken.ThrowIfCancellationRequested();
-        if (_dispatcher.TryPark(message, options))
+        if (await _dispatcher.TryParkAsync(message, options, cancellationToken: cancellationToken))
         {
-            return Task.CompletedTask;
+            return;
         }
 
-        return _sender.SendAsync(EnvelopeForPublish(message, _routing.For(message)), cancellationToken).AsTask();
+        await _sender.SendAsync(EnvelopeForPublish(message, _routing.For(message)), cancellationToken);
     }
 
     public Task<TrackedSession> InvokeTrackedAsync(
@@ -165,7 +167,7 @@ public sealed class Mediator : IMessageBus
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (_dispatcher.TryPark(message, options))
+            if (await _dispatcher.TryParkAsync(message, options, cancellationToken: cancellationToken))
             {
                 return Freeze();
             }

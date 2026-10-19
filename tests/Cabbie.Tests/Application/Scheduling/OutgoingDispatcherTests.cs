@@ -12,7 +12,7 @@ namespace Cabbie.Tests.Application.Scheduling;
 public sealed class OutgoingDispatcherTests
 {
     [Fact]
-    public void mixed_cascade_publishes_immediate_and_parks_timeout()
+    public async Task mixed_cascade_publishes_immediate_and_parks_timeout()
     {
         var hold = new InMemoryScheduledEnvelopeHold();
         var cascades = new RecordingImmediate();
@@ -22,7 +22,7 @@ public sealed class OutgoingDispatcherTests
             conversationId: new ConversationId(Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")),
             sagaId: new SagaId("42"));
 
-        dispatcher.Dispatch([new ChargePayment(1), new OrderTimeout(1)], parent);
+        await dispatcher.DispatchAsync([new ChargePayment(1), new OrderTimeout(1)], parent);
 
         var payment = Assert.IsType<ChargePayment>(Assert.Single(cascades.Published));
         Assert.Equal(1, payment.OrderId);
@@ -36,28 +36,28 @@ public sealed class OutgoingDispatcherTests
     }
 
     [Fact]
-    public void empty_outgoing_parks_nothing()
+    public async Task empty_outgoing_parks_nothing()
     {
         var hold = new InMemoryScheduledEnvelopeHold();
         var cascades = new RecordingImmediate();
         var dispatcher = new OutgoingDispatcher(hold, cascades);
 
-        dispatcher.Dispatch([], EnvelopeFactory.Create());
+        await dispatcher.DispatchAsync([], EnvelopeFactory.Create());
 
         Assert.Empty(hold.Peek());
         Assert.Empty(cascades.Published);
     }
 
     [Fact]
-    public void until_before_sent_at_fails_envelope_validation()
+    public async Task until_before_sent_at_fails_envelope_validation()
     {
         var hold = new InMemoryScheduledEnvelopeHold();
         var dispatcher = new OutgoingDispatcher(hold);
         DateTimeOffset sent = DateTimeOffset.UtcNow;
         var options = new DeliveryOptions { Until = sent.AddMinutes(-1) };
 
-        Assert.Throws<FluentValidation.ValidationException>(
-            () => dispatcher.TryPark(new PlaceOrder(1), options));
+        await Assert.ThrowsAsync<FluentValidation.ValidationException>(
+            () => dispatcher.TryParkAsync(new PlaceOrder(1), options).AsTask());
         Assert.Empty(hold.Peek());
     }
 

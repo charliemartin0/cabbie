@@ -6,7 +6,7 @@ namespace Cabbie.Tests.Postgresql;
 
 /// <summary>
 /// Shared Postgres container per test class. Starts once, bootstraps the outbox, inbox,
-/// dead-letter, and saga schemas, and exposes TRUNCATE helpers so each fact gets a fresh table.
+/// dead-letter, saga, and scheduled schemas, and exposes TRUNCATE helpers so each fact gets a fresh table.
 /// </summary>
 public sealed class PostgresContainerFixture : IAsyncLifetime
 {
@@ -46,6 +46,7 @@ public sealed class PostgresContainerFixture : IAsyncLifetime
         await PostgresSchema.EnsureInboxTableAsync(DataSource);
         await PostgresSchema.EnsureDeadLetterTableAsync(DataSource);
         await PostgresSchema.EnsureSagaTableAsync(DataSource);
+        await PostgresSchema.EnsureScheduledTableAsync(DataSource);
     }
 
     public async Task DisposeAsync()
@@ -79,6 +80,13 @@ public sealed class PostgresContainerFixture : IAsyncLifetime
     {
         await using NpgsqlConnection conn = await DataSource.OpenConnectionAsync();
         await using NpgsqlCommand cmd = new NpgsqlCommand("TRUNCATE TABLE cabbie_sagas", conn);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task ResetScheduledAsync()
+    {
+        await using NpgsqlConnection conn = await DataSource.OpenConnectionAsync();
+        await using NpgsqlCommand cmd = new NpgsqlCommand("TRUNCATE TABLE cabbie_scheduled", conn);
         await cmd.ExecuteNonQueryAsync();
     }
 }

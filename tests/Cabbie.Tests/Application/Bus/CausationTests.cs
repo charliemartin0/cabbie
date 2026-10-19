@@ -94,14 +94,14 @@ public sealed class CausationTests
     }
 
     [Fact]
-    public void outgoing_dispatcher_parks_with_the_parent_as_causation_or_none_for_a_top_level_message()
+    public async Task outgoing_dispatcher_parks_with_the_parent_as_causation_or_none_for_a_top_level_message()
     {
         var hold = new InMemoryScheduledEnvelopeHold();
         var dispatcher = new OutgoingDispatcher(hold);
         Envelope parent = EnvelopeFactory.Create();
 
-        dispatcher.TryPark(new OrderTimeout(1), null, parent);
-        dispatcher.TryPark(new OrderTimeout(2), null);
+        await dispatcher.TryParkAsync(new OrderTimeout(1), null, parent);
+        await dispatcher.TryParkAsync(new OrderTimeout(2), null);
 
         IReadOnlyList<Envelope> parked = hold.Peek();
         Assert.Equal(new CausationId(parent.Id.Value), parked[0].CausationId);

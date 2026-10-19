@@ -9,6 +9,7 @@ Cabbie is named for the driver of the hansom, the Victorian London cab — small
 - [Dependency injection](#dependency-injection)
 - [Error policies](#error-policies)
 - [Endpoints and transports](#endpoints-and-transports)
+- [Scheduling](#scheduling)
 - [Architecture](#architecture)
 - [Project Structure](#project-structure)
 - [Roadmap](#roadmap)
@@ -23,6 +24,7 @@ Cabbie is named for the driver of the hansom, the Victorian London cab — small
 - **Cascading messages** — handler return values become new messages after the handler succeeds. Throwing handlers publish nothing.
 - **Instance sagas** — long-running workflow state keyed by aggregate id, advanced by messages it cares about. `NotFound` swallows harmless late arrivals.
 - **Scheduled envelopes** — `[Timeout(Minutes = 1)]` on a message, parked until `PlayDue(asOf)`. Tests fast-forward without `Task.Delay`.
+- **Durable scheduler** — `UsePostgres` parks delayed envelopes in `cabbie_scheduled` and a hosted poller plays them once due, across restarts and multiple hosts. See [Scheduling](#scheduling).
 - **Local queues** — in-process worker queues keyed by destination URI, behind the `local://` transport. `Pause`/`Resume` per queue, clean drain on host stop.
 - **In-memory inbox, outbox, dead-letter, and saga stores** — ports defined in Application, in-memory implementation in Infrastructure. The PostgreSQL adapter fills the durable version.
 - **JSON serialization** — `IMessageSerializer` port + `System.Text.Json` default, used at the transport boundary, content-type aware.
@@ -150,6 +152,17 @@ public interface IReceiver { Task<ReceiveOutcome> ReceiveAsync(Envelope envelope
 - Fan-out: subscribe each queue with protocol `sqs` and `RawMessageDelivery=true`. Without raw delivery SNS wraps the body in its own JSON envelope and the listener dead-letters it. On AWS the queue policy must also allow `sns:SendMessage` from the topic.
 - Headers: packed exactly as for SQS (one `cabbie-headers` attribute, base64 body when needed), so every subscribed listener sees the same headers and body. A topic with no subscriptions drops the publish without error.
 
+## Scheduling
+
+Delayed messages (`DeliveryOptions.Delay`/`Until`, `[Timeout]`, `ScheduledCascade`, `ScheduleRetry`) are parked in an `IScheduledEnvelopeHold`. Due envelopes are claimed, played, then completed (forgotten) or released (claimable again); `IMessageScheduler.PlayDue(asOf)` runs that cycle.
+
+- In-memory (default): lost on restart, nothing plays it on its own; tests and tracked sessions call `PlayDue`/`PlayScheduledMessagesAsync`.
+- Postgres: `UsePostgres` replaces the hold with `PostgresScheduledEnvelopeHold` and adds `ScheduledMessagePoller`, a hosted service that plays due messages at start (so anything that came due while the host was down is delivered) and then every `PollInterval` (default 1 s, `AddScheduledMessagePoller(new ScheduledMessagePollerOptions { PollInterval = ... })`), driven by the host `TimeProvider`. `PostgresSchema.EnsureAllAsync` creates `cabbie_scheduled`.
+- Claims use `UPDATE ... WHERE seq IN (SELECT ... FOR UPDATE SKIP LOCKED)` with a `locked_until` lease, so two pollers (on one host or many) never receive the same row. A poller that dies mid-play loses its lease after `PostgresScheduleOptions.ClaimLease` (default 5 min) and the message is delivered again: at-least-once, deduplicated per handler by the inbox. Each poll claims at most `BatchSize` (default 500) rows, so a poller drains about `BatchSize / PollInterval` messages per second.
+- A row whose message type this host does not know is logged and left locked until its lease expires, so a later deploy that knows the type delivers it; it never blocks other rows.
+- SQS native `DelaySeconds` is not used: it caps at 15 minutes and would need destination-aware routing of scheduled envelopes.
+- Alternative, not implemented: EventBridge Scheduler. One one-time `at()` schedule per message targeting an SQS queue or SNS topic needs no table or poller, but adds a second AWS service, a per-schedule IAM role, and no in-process tracked sessions.
+
 ## Architecture
 
 Cabbie is onion. The kernel does not know about brokers, databases, or HTTP. Adapters reference the kernel; the kernel never references adapters.
@@ -201,7 +214,7 @@ A minimal getting-started sample comes with NuGet packaging (item 7).
 4. **Transport contract suite** — Done: `tests/Cabbie.Transports.Contracts` holds one abstract xUnit suite (`TransportContract`) every transport subclasses with a small fixture: round trip, ack, defer, nack, unreadable payload dead-lettered, listener stop, shared addresses, sender lifecycle and header packing. Transports declare the behaviour they may differ on (`TransportCapabilities`) and their wait times (`TransportContractTimings`). Run today against `local://` through the serialising path; `Cabbie.Aws` reuses it. The duplicate-delivery check waits for the inbox (item 5).
 5. **Handler isolation + inbox** — 5a Done: each handler in a fan-out runs, fails, retries and dead-letters on its own; a failure in one never skips or re-runs the others, and a policy `Requeue` or `ScheduleRetry` re-runs only the failed handler as the next attempt, after the policy delay. 5b Done: the inbox gives per-(envelope, handler) idempotency (in-memory and `Cabbie.Postgresql` stores), so a redelivery no longer re-runs handlers that already succeeded.
 6. **`Cabbie.Aws`** — 6a Done: the `sqs://` transport (`Cabbie.Aws`), tested against LocalStack (Testcontainers) with the shared contract suite. See [SQS](#sqs). 6b Done: the `sns://` publish transport with fan-out to raw-delivery SQS subscriptions, tested on LocalStack. See [SNS](#sns). Topology provisioning (topics, subscriptions, queue policies) stays with the caller.
-7. **Durable scheduler**, then an **EF-transactional outbox + relay**, then **packaging, versioning and CI** so Storeboost can consume Cabbie, then the **Storeboost cutover** behind an `IProducerService`/`IScheduleService`-shaped facade.
+7. 7a Done: the **durable scheduler** (Postgres hold + poller, see [Scheduling](#scheduling)); then an **EF-transactional outbox + relay**, then **packaging, versioning and CI** so Storeboost can consume Cabbie, then the **Storeboost cutover** behind an `IProducerService`/`IScheduleService`-shaped facade.
 
 3 → 4 → 5 run in that order (they share `MessageDelivery` and host registration). 6 builds on 3–5.
 
@@ -216,7 +229,7 @@ A minimal getting-started sample comes with NuGet packaging (item 7).
 ### Open decisions
 
 - **Build vs adopt:** keep building Cabbie, or adopt Wolverine (which ships SQS/SNS, outbox and scheduling) for the Storeboost replacement.
-- **Delays:** a Postgres-backed scheduler or EventBridge Scheduler (SQS caps delays at 15 minutes; SNS has none).
+- **Delays:** decided for now: the Postgres-backed scheduler. EventBridge Scheduler stays a documented alternative (SQS caps delays at 15 minutes; SNS has none).
 - **Outbox:** an EF-joined `Cabbie.EntityFrameworkCore`, or sharing the Npgsql connection and transaction with EF.
 - **"Wolverine-shaped":** a design constraint, or only inspiration.
 

@@ -54,6 +54,7 @@ public sealed class PostgresHostBuilderTests : IClassFixture<PostgresContainerFi
     {
         await _fixture.ResetSagasAsync();
         await _fixture.ResetDeadLetterAsync();
+        await _fixture.ResetScheduledAsync();
     }
 
     public Task DisposeAsync() => Task.CompletedTask;

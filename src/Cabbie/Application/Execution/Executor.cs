@@ -295,7 +295,7 @@ public sealed class Executor
                     throw new ScheduleRetryNotSupportedOnInvoke();
                 }
 
-                ParkScheduledRetry(current, handler, retry);
+                await ParkScheduledRetryAsync(current, handler, retry, cancellationToken);
                 MarkHandedOff(handOff);
                 Bus.FanOut.NoteDiverted();
                 return null;
@@ -356,7 +356,11 @@ public sealed class Executor
         return true;
     }
 
-    private void ParkScheduledRetry(Envelope current, DiscoveredHandler handler, ScheduleRetry retry)
+    private ValueTask ParkScheduledRetryAsync(
+        Envelope current,
+        DiscoveredHandler handler,
+        ScheduleRetry retry,
+        CancellationToken cancellationToken)
     {
         if (_scheduled is null)
         {
@@ -373,7 +377,7 @@ public sealed class Executor
             DeliverBy = new DeliverBy(_time.GetUtcNow() + retry.Delay),
             Handler = new HandlerName(handler.Name)
         };
-        _scheduled.Park(parked);
+        return _scheduled.ParkAsync(parked, cancellationToken);
     }
 
     private static Dictionary<string, object> AttemptScope(Envelope envelope)
