@@ -241,8 +241,7 @@ public sealed class Mediator : IMessageBus
             return;
         }
 
-        List<HandlerFault>? faults = null;
-        foreach (DiscoveredHandler handler in targets)
+        async Task RunOne(DiscoveredHandler handler)
         {
             InHandler.Value = true;
             try
@@ -292,17 +291,13 @@ public sealed class Mediator : IMessageBus
                     await _delivery.InvokeAndDispatch(envelope, handler, scheduled, fromTransport, cancellationToken);
                 }
             }
-            catch (HandlerFault fault)
-            {
-                (faults ??= []).Add(fault);
-            }
             finally
             {
                 InHandler.Value = false;
             }
         }
 
-        FanOut.Rethrow(faults);
+        await FanOut.RunAsync(targets, envelope, _executor, RunOne, cancellationToken);
     }
 
     /// <summary>
