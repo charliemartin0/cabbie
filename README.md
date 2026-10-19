@@ -142,6 +142,14 @@ public interface IReceiver { Task<ReceiveOutcome> ReceiveAsync(Envelope envelope
 - `StopAsync` stops polling and waits for the messages in flight; cancelling its token abandons the wait and cancels the receiver (those messages are released). Several listeners on one queue compete: each message goes to one of them.
 - LocalStack tests (`tests/Cabbie.Aws.Tests`) need Docker and are not part of `Cabbie.slnx`: `dotnet test tests/Cabbie.Aws.Tests`.
 
+### SNS
+
+`Cabbie.Aws` also owns the `sns` scheme: `new SnsTransport(IAmazonSimpleNotificationService client, EnvelopeCodec codec)`. It is publish-only: `CreateListener` throws `NotSupportedException`. Subscribers are SQS queues, listened to with `sqs://`.
+
+- Address: `sns://<topic-name>/` (same host rules as `sqs://`). The topic must already exist: the sender looks it up by name (listing topics) and a missing one throws the SDK's `NotFoundException`; a failed lookup is retried by the next send. The transport creates no topics, subscriptions or queue policies and never disposes the client you give it.
+- Fan-out: subscribe each queue with protocol `sqs` and `RawMessageDelivery=true`. Without raw delivery SNS wraps the body in its own JSON envelope and the listener dead-letters it. On AWS the queue policy must also allow `sns:SendMessage` from the topic.
+- Headers: packed exactly as for SQS (one `cabbie-headers` attribute, base64 body when needed), so every subscribed listener sees the same headers and body. A topic with no subscriptions drops the publish without error.
+
 ## Architecture
 
 Cabbie is onion. The kernel does not know about brokers, databases, or HTTP. Adapters reference the kernel; the kernel never references adapters.
@@ -174,8 +182,8 @@ Cabbie/
   src/Cabbie.Postgresql/         persistence adapter (shipped)
   src/Cabbie.RabbitMQ/           broker adapter (scaffold)
   src/Cabbie.Http/               HTTP front door (scaffold)
-  src/Cabbie.Aws/                AWS adapter: SQS transport (shipped)
-  tests/Cabbie.Aws.Tests/        SQS against LocalStack (Docker): runs the shared contract suite
+  src/Cabbie.Aws/                AWS adapter: SQS and SNS transports (shipped)
+  tests/Cabbie.Aws.Tests/        SQS and SNS against LocalStack (Docker): SQS runs the shared contract suite
   tests/Cabbie.Tests/            xUnit facts, small fakes
 ```
 
@@ -192,7 +200,7 @@ A minimal getting-started sample comes with NuGet packaging (item 7).
 3. **Transport selection** — Done: endpoints are URIs, the scheme picks the transport through a registry, unknown schemes fail host start, and `ListenTo` listeners are started and stopped by the host. See [Endpoints and transports](#endpoints-and-transports).
 4. **Transport contract suite** — Done: `tests/Cabbie.Transports.Contracts` holds one abstract xUnit suite (`TransportContract`) every transport subclasses with a small fixture: round trip, ack, defer, nack, unreadable payload dead-lettered, listener stop, shared addresses, sender lifecycle and header packing. Transports declare the behaviour they may differ on (`TransportCapabilities`) and their wait times (`TransportContractTimings`). Run today against `local://` through the serialising path; `Cabbie.Aws` reuses it. The duplicate-delivery check waits for the inbox (item 5).
 5. **Handler isolation + inbox** — 5a Done: each handler in a fan-out runs, fails, retries and dead-letters on its own; a failure in one never skips or re-runs the others, and a policy `Requeue` or `ScheduleRetry` re-runs only the failed handler as the next attempt, after the policy delay. 5b Done: the inbox gives per-(envelope, handler) idempotency (in-memory and `Cabbie.Postgresql` stores), so a redelivery no longer re-runs handlers that already succeeded.
-6. **`Cabbie.Aws`** — 6a Done: the `sqs://` transport (`Cabbie.Aws`), tested against LocalStack (Testcontainers) with the shared contract suite. See [SQS](#sqs). 6b pending: SNS fan-out and topology.
+6. **`Cabbie.Aws`** — 6a Done: the `sqs://` transport (`Cabbie.Aws`), tested against LocalStack (Testcontainers) with the shared contract suite. See [SQS](#sqs). 6b Done: the `sns://` publish transport with fan-out to raw-delivery SQS subscriptions, tested on LocalStack. See [SNS](#sns). Topology provisioning (topics, subscriptions, queue policies) stays with the caller.
 7. **Durable scheduler**, then an **EF-transactional outbox + relay**, then **packaging, versioning and CI** so Storeboost can consume Cabbie, then the **Storeboost cutover** behind an `IProducerService`/`IScheduleService`-shaped facade.
 
 3 → 4 → 5 run in that order (they share `MessageDelivery` and host registration). 6 builds on 3–5.
