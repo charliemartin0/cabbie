@@ -14,7 +14,7 @@ namespace Cabbie.Tests.Infrastructure.Observability;
 
 public sealed class AttemptCorrelationTests : IDisposable
 {
-    private readonly List<Activity> _activities = [];
+    private readonly System.Collections.Concurrent.ConcurrentQueue<Activity> _activities = new();
     private readonly ActivityListener _listener;
 
     public AttemptCorrelationTests()
@@ -23,7 +23,7 @@ public sealed class AttemptCorrelationTests : IDisposable
         {
             ShouldListenTo = source => source.Name == CabbieDiagnostics.SourceName,
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
-            ActivityStopped = _activities.Add,
+            ActivityStopped = _activities.Enqueue,
         };
         ActivitySource.AddActivityListener(_listener);
     }
@@ -37,7 +37,7 @@ public sealed class AttemptCorrelationTests : IDisposable
 
         new ObservabilityAttemptObserver().OnAttempt(envelope, Handler(), exception: null);
 
-        Activity activity = Assert.Single(_activities);
+        Activity activity = Assert.Single(_activities, a => (string?)a.GetTagItem("cabbie.envelope.id") == envelope.Id.Value.ToString());
         Assert.Equal(envelope.CausationId!.Value.ToString(), activity.GetTagItem("cabbie.causation.id"));
         Assert.Equal(envelope.CorrelationId.Value.ToString(), activity.GetTagItem("cabbie.correlation.id"));
         Assert.Equal(envelope.ConversationId.Value.ToString(), activity.GetTagItem("cabbie.conversation.id"));
@@ -46,9 +46,10 @@ public sealed class AttemptCorrelationTests : IDisposable
     [Fact]
     public void attempt_activity_for_a_top_level_envelope_has_no_causation_tag()
     {
-        new ObservabilityAttemptObserver().OnAttempt(ChargeEnvelope(causation: null), Handler(), exception: null);
+        Envelope envelope = ChargeEnvelope(causation: null);
+        new ObservabilityAttemptObserver().OnAttempt(envelope, Handler(), exception: null);
 
-        Activity activity = Assert.Single(_activities);
+        Activity activity = Assert.Single(_activities, a => (string?)a.GetTagItem("cabbie.envelope.id") == envelope.Id.Value.ToString());
         Assert.Null(activity.GetTagItem("cabbie.causation.id"));
         Assert.NotNull(activity.GetTagItem("cabbie.correlation.id"));
     }
