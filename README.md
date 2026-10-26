@@ -223,6 +223,8 @@ Cabbie/
 
 Goal: replace AsyncMonolith in StoreboostServices with Cabbie on AWS SQS/SNS. Done: Hansom → Cabbie rename.
 
+Readiness gap register for the Storeboost cutover: [docs/storeboost-readiness.md](docs/storeboost-readiness.md).
+
 A minimal getting-started sample comes with NuGet packaging (item 7).
 
 1. **Handler DI** — constructor injection with a scope per message (fresh scope per retry); discover `Consume` inherited from generic base classes.
