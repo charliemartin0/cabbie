@@ -25,6 +25,7 @@
     <ProjectReference Include="..\Cabbie.Tests.FactoryHandlers\Cabbie.Tests.FactoryHandlers.csproj" />
     <ProjectReference Include="..\Cabbie.Tests.InvalidCatalog\Cabbie.Tests.InvalidCatalog.csproj" />
     <ProjectReference Include="..\Cabbie.Tests.InvalidHandlers\Cabbie.Tests.InvalidHandlers.csproj" />
+    <ProjectReference Include="..\Cabbie.Transports.Contracts\Cabbie.Transports.Contracts.csproj" />
   </ItemGroup>
 
 </Project>
