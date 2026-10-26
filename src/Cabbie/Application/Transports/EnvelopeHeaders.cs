@@ -23,4 +23,5 @@ public static class EnvelopeHeaders
     public const string DeliverBy = "cabbie-deliver-by";
     public const string Attempts = "cabbie-attempts";
     public const string ContentType = "cabbie-content-type";
+    public const string Handler = "cabbie-handler";
 }

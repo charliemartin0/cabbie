@@ -18,4 +18,5 @@ public record Envelope(
     ContentType ContentType,
     Attempts Attempts,
     EnvelopeData Data,
-    CausationId? CausationId = null);
+    CausationId? CausationId = null,
+    HandlerName? Handler = null);

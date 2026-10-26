@@ -65,9 +65,25 @@ public sealed class OnExceptionExpression
         return this;
     }
 
-    public OnExceptionExpression Requeue()
+    public OnExceptionExpression Requeue(params TimeSpan[] delays)
     {
-        Add(new Requeue());
+        ArgumentNullException.ThrowIfNull(delays);
+        if (delays.Length == 0)
+        {
+            Add(new Requeue(TimeSpan.Zero));
+            return this;
+        }
+
+        foreach (TimeSpan delay in delays)
+        {
+            if (delay < TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(delays), delay, "Requeue delay must not be negative.");
+            }
+
+            Add(new Requeue(delay));
+        }
+
         return this;
     }
 
