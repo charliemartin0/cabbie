@@ -269,7 +269,7 @@ public sealed class MessageDelivery
             DateTimeOffset? due = DelayedDelivery.DueAt(message.GetType(), options, sentAt);
             if (due is not null)
             {
-                _hold.Park(Build(message, sentAt, due, parent));
+                await _hold.ParkAsync(Build(message, sentAt, due, parent), ct);
                 continue;
             }
 

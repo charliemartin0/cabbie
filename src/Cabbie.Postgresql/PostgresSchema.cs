@@ -150,6 +150,48 @@ public static class PostgresSchema
     }
 
     /// <summary>
+    /// Create the <c>cabbie_scheduled</c> table and its due-time index if they do not already exist.
+    /// <para>
+    /// Shape: <c>(seq BIGSERIAL PK, id UUID, due_at TIMESTAMPTZ, headers JSONB, body BYTEA,
+    /// locked_until TIMESTAMPTZ NULL, next_attempt_at TIMESTAMPTZ NULL, failures INT DEFAULT 0,
+    /// created_at TIMESTAMPTZ DEFAULT now())</c>. The envelope is stored as
+    /// its transport form (codec headers plus serialized body). <c>seq</c>, not the envelope id, is the
+    /// key and the claim token: a scheduled retry re-parks the same envelope id while the original row is
+    /// still claimed. <c>locked_until</c> is the claim lease; a row is claimable when it is null or past.
+    /// A failed play sets <c>next_attempt_at</c> (backoff) and bumps <c>failures</c>.
+    /// </para>
+    /// </summary>
+    public static async ValueTask EnsureScheduledTableAsync(NpgsqlDataSource dataSource, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(dataSource);
+
+        const string sql = """
+            CREATE TABLE IF NOT EXISTS cabbie_scheduled (
+                seq BIGSERIAL PRIMARY KEY,
+                id UUID NOT NULL,
+                due_at TIMESTAMPTZ NOT NULL,
+                headers JSONB NOT NULL,
+                body BYTEA NOT NULL,
+                locked_until TIMESTAMPTZ NULL,
+                next_attempt_at TIMESTAMPTZ NULL,
+                failures INT NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+
+            ALTER TABLE cabbie_scheduled ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ NULL;
+            ALTER TABLE cabbie_scheduled ADD COLUMN IF NOT EXISTS failures INT NOT NULL DEFAULT 0;
+
+            DROP INDEX IF EXISTS cabbie_scheduled_due_idx;
+            CREATE INDEX IF NOT EXISTS cabbie_scheduled_next_idx
+                ON cabbie_scheduled ((COALESCE(next_attempt_at, due_at)), seq);
+            """;
+
+        await using NpgsqlConnection conn = await dataSource.OpenConnectionAsync(ct);
+        await using NpgsqlCommand cmd = new NpgsqlCommand(sql, conn);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>
     /// Create every Cabbie Postgres table that the adapter needs. Idempotent;
     /// safe to call repeatedly. Call once at startup before the host starts
     /// processing messages — typically from Program.cs.
@@ -161,5 +203,6 @@ public static class PostgresSchema
         await EnsureInboxTableAsync(dataSource, ct);
         await EnsureDeadLetterTableAsync(dataSource, ct);
         await EnsureSagaTableAsync(dataSource, ct);
+        await EnsureScheduledTableAsync(dataSource, ct);
     }
 }

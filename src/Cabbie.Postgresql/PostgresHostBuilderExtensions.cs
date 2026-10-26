@@ -1,18 +1,22 @@
 using Cabbie.Application.Persistence;
 using Cabbie.Application.Sagas;
+using Cabbie.Application.Scheduling;
+using Cabbie.Application.Transports;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace Cabbie.Postgresql;
 
 /// <summary>
 /// Host builder extensions that wire the Postgres-backed implementations of the Cabbie
-/// persistence and saga ports. Must be called AFTER <c>UseCabbie</c> — the last-wins
+/// persistence, saga and scheduled-envelope ports, and host the poller that plays due scheduled messages. Must be called AFTER <c>UseCabbie</c> — the last-wins
 /// registration model means reverse order keeps the in-memory defaults.
 /// <para>
 /// Schema is not auto-bootstrapped: call <see cref="PostgresSchema.EnsureAllAsync"/>
-/// once at startup (typically from Program.cs) before the host starts processing messages.
+/// once at startup (typically from Program.cs) before the host starts processing messages;
+/// it also creates <c>cabbie_scheduled</c>.
 /// </para>
 /// </summary>
 public static class PostgresHostBuilderExtensions
@@ -23,13 +27,14 @@ public static class PostgresHostBuilderExtensions
     /// </summary>
     public static IHostApplicationBuilder UsePostgres(
         this IHostApplicationBuilder builder,
-        string connectionString)
+        string connectionString,
+        PostgresScheduleOptions? schedule = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(connectionString);
 
         NpgsqlDataSource dataSource = new NpgsqlDataSourceBuilder(connectionString).Build();
-        return builder.UsePostgres(dataSource);
+        return builder.UsePostgres(dataSource, schedule);
     }
 
     /// <summary>
@@ -39,7 +44,8 @@ public static class PostgresHostBuilderExtensions
     /// </summary>
     public static IHostApplicationBuilder UsePostgres(
         this IHostApplicationBuilder builder,
-        NpgsqlDataSource dataSource)
+        NpgsqlDataSource dataSource,
+        PostgresScheduleOptions? schedule = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(dataSource);
@@ -56,6 +62,13 @@ public static class PostgresHostBuilderExtensions
         builder.Services.AddSingleton<ISagaStore>(saga);
         builder.Services.AddSingleton<IMessageStore>(_ =>
             new CompositeMessageStore(outbox, inbox, deadLetter));
+        builder.Services.AddSingleton<IScheduledEnvelopeHold>(services => new PostgresScheduledEnvelopeHold(
+            dataSource,
+            services.GetRequiredService<EnvelopeCodec>(),
+            schedule,
+            services.GetService<TimeProvider>(),
+            services.GetService<ILogger<PostgresScheduledEnvelopeHold>>()));
+        builder.Services.AddScheduledMessagePoller();
 
         return builder;
     }

@@ -157,13 +157,40 @@ public static class CabbieHostBuilderExtensions
             routing: services.GetRequiredService<RoutingCatalog>(),
             sender: services.GetRequiredService<TransportRouter>(),
             attempts: services.GetRequiredService<IHandlerAttemptObserver>(),
-            inbox: services.GetRequiredService<IMessageStore>().Inbox));
+            inbox: services.GetRequiredService<IMessageStore>().Inbox,
+            errorQueue: services.GetService<IErrorQueue>()));
         services.AddSingleton<IMessageBus>(services => services.GetRequiredService<Mediator>());
+        services.AddSingleton<IMessageScheduler>(services =>
+        {
+            Mediator mediator = services.GetRequiredService<Mediator>();
+            return new MessageScheduler(
+                services.GetRequiredService<IScheduledEnvelopeHold>(),
+                (envelope, cancellationToken) => mediator.DispatchHandlers(envelope, scheduled: true, cancellationToken),
+                services.GetService<IErrorQueue>());
+        });
         services.AddSingleton(new CabbieHandlerRegistrations(services, added));
         services.AddSingleton<IHostedService, HandlerDependencyStartupCheck>();
         services.AddSingleton<CabbieHostedService>();
         services.AddSingleton<IHostedService>(
             services => services.GetRequiredService<CabbieHostedService>());
+        return services;
+    }
+
+    /// <summary>
+    /// Hosts a <see cref="ScheduledMessagePoller"/> that plays due scheduled messages from the registered
+    /// <see cref="IScheduledEnvelopeHold"/>. Call after <c>UseCabbie</c>.
+    /// </summary>
+    public static IServiceCollection AddScheduledMessagePoller(
+        this IServiceCollection services,
+        ScheduledMessagePollerOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ScheduledMessagePollerOptions resolved = options ?? new ScheduledMessagePollerOptions();
+        services.AddSingleton<IHostedService>(services => new ScheduledMessagePoller(
+            services.GetRequiredService<IMessageScheduler>(),
+            services.GetService<TimeProvider>() ?? TimeProvider.System,
+            resolved,
+            services.GetService<ILogger<ScheduledMessagePoller>>()));
         return services;
     }
 }

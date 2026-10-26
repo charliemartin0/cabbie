@@ -1,6 +1,5 @@
 using Cabbie.Application.Scheduling;
 using Cabbie.Domain.Envelope;
-using Cabbie.Domain.Envelope.ValueObjects;
 
 namespace Cabbie.Application.Tracking;
 
@@ -17,15 +16,26 @@ internal sealed class RecordingScheduledEnvelopeHold : IScheduledEnvelopeHold
         _onPark = onPark;
     }
 
-    public IReadOnlyList<Envelope> Peek() => _inner.Peek();
-
-    public void Park(Envelope envelope)
+    public ValueTask ParkAsync(Envelope envelope, CancellationToken cancellationToken = default)
     {
         _onPark(envelope);
-        _inner.Park(envelope);
+        return _inner.ParkAsync(envelope, cancellationToken);
     }
 
-    public bool TryRemove(EnvelopeId id) => _inner.TryRemove(id);
+    public ValueTask<IReadOnlyList<ClaimedEnvelope>> ClaimDueAsync(
+        DateTimeOffset asOf,
+        CancellationToken cancellationToken = default) => _inner.ClaimDueAsync(asOf, cancellationToken);
+
+    public ValueTask CompleteAsync(ClaimedEnvelope claim, CancellationToken cancellationToken = default) =>
+        _inner.CompleteAsync(claim, cancellationToken);
+
+    public ValueTask ReleaseAsync(ClaimedEnvelope claim, CancellationToken cancellationToken = default) =>
+        _inner.ReleaseAsync(claim, cancellationToken);
+
+    public ValueTask DeferAsync(
+        ClaimedEnvelope claim,
+        DateTimeOffset notBefore,
+        CancellationToken cancellationToken = default) => _inner.DeferAsync(claim, notBefore, cancellationToken);
 
     public IDisposable BeginPlay() => _inner.BeginPlay();
 }
