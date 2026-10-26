@@ -38,10 +38,7 @@ Cabbie is named for the driver of the hansom, the Victorian London cab — small
 ```bash
 dotnet build src/Cabbie
 dotnet test
-dotnet run --project samples/Helpdesk/src/Helpdesk.Host
 ```
-
-The Helpdesk sample runs against the in-memory kernel: instance saga, local queues, in-memory store. It is the smallest conversation Cabbie can have. Everything in the roadmap is "more of the same, on real infrastructure."
 
 ## Dependency injection
 
@@ -130,8 +127,6 @@ public interface IReceiver { Task<ReceiveOutcome> ReceiveAsync(Envelope envelope
 Cabbie is onion. The kernel does not know about brokers, databases, or HTTP. Adapters reference the kernel; the kernel never references adapters.
 
 ```
-samples/Helpdesk ──┐
-                   │
 src/Cabbie.Postgresql  src/Cabbie.RabbitMQ  src/Cabbie.Http
                    │
                    ▼
@@ -159,13 +154,7 @@ Cabbie/
   src/Cabbie.Postgresql/         persistence adapter (shipped)
   src/Cabbie.RabbitMQ/           broker adapter (scaffold)
   src/Cabbie.Http/               HTTP front door (scaffold)
-  samples/Helpdesk/src/
-    Helpdesk.Domain/             entities / value objects — no Cabbie, no infra
-    Helpdesk.Application/        messages + handlers — Domain + Cabbie
-    Helpdesk.Infrastructure/     in-memory wiring — Application + Cabbie
-    Helpdesk.Host/               composition root
   tests/Cabbie.Tests/            xUnit facts, small fakes
-  tests/Helpdesk.Tests/          sample facts
 ```
 
 `src/Cabbie` does not `ProjectReference` the adapter projects. Npgsql stays in `Cabbie.Postgresql`; Rabbit in `Cabbie.RabbitMQ`; HTTP in `Cabbie.Http`. The dependency direction is enforced by project rules, not by convention.
@@ -173,6 +162,8 @@ Cabbie/
 ## Roadmap
 
 Goal: replace AsyncMonolith in StoreboostServices with Cabbie on AWS SQS/SNS. Done: Hansom → Cabbie rename.
+
+A minimal getting-started sample comes with NuGet packaging (item 7).
 
 1. **Handler DI** — constructor injection with a scope per message (fresh scope per retry); discover `Consume` inherited from generic base classes.
 2. **Error policy fixes** — Done: base-type exception matching, a default retry/dead-letter policy, handler timeouts, an awaited dead-letter write. See [Error policies](#error-policies).
