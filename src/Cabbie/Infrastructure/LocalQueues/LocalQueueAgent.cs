@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading.Channels;
 using Cabbie.Application.Transports;
 using Cabbie.Domain.Envelope;
@@ -13,11 +15,16 @@ namespace Cabbie.Infrastructure.LocalQueues;
 /// Each envelope goes to the <see cref="IReceiver"/> (Execution, including cascade re-enqueueing);
 /// a <see cref="ReceiveOutcome.Defer"/> puts it back on the queue, Ack and Nack drop it (local has
 /// no redelivery: the error policy already ran and the receiver logged a Nack).
+/// Items passed by reference go straight to the receiver. Encoded items (a <c>LocalTransport</c>
+/// with a codec) are decoded here, on the listener side. An unreadable one never reaches the
+/// receiver: it is acknowledged (dropped from the queue), kept in <c>DeadLetters</c> (the local
+/// dead-letter destination) and logged.
 /// </summary>
 public sealed class LocalQueueAgent
 {
-    private readonly Channel<Envelope> _channel = Channel.CreateUnbounded<Envelope>(
+    private readonly Channel<Delivery> _channel = Channel.CreateUnbounded<Delivery>(
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+    private readonly ConcurrentQueue<TransportMessage> _deadLetters = new();
     private readonly IReceiver _receiver;
     private readonly ILogger _logger;
     private volatile TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -37,6 +44,8 @@ public sealed class LocalQueueAgent
 
     internal IReceiver Receiver => _receiver;
 
+    internal IReadOnlyList<TransportMessage> DeadLetters => [.. _deadLetters];
+
     public string Name { get; }
 
     public int QueueLength => _channel.Reader.Count;
@@ -55,7 +64,15 @@ public sealed class LocalQueueAgent
     {
         ArgumentNullException.ThrowIfNull(envelope);
         Start();
-        _channel.Writer.TryWrite(envelope);
+        _channel.Writer.TryWrite(new Delivery(envelope, null, null));
+    }
+
+    internal void Enqueue(TransportMessage message, EnvelopeCodec codec)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        ArgumentNullException.ThrowIfNull(codec);
+        Start();
+        _channel.Writer.TryWrite(new Delivery(null, message, codec));
     }
 
     public void Pause()
@@ -86,15 +103,20 @@ public sealed class LocalQueueAgent
     {
         while (await _channel.Reader.WaitToReadAsync())
         {
-            while (_channel.Reader.TryRead(out Envelope? envelope))
+            while (_channel.Reader.TryRead(out Delivery delivery))
             {
                 await WaitWhilePausedAsync();
                 try
                 {
+                    if (!TryOpen(delivery, out Envelope? envelope))
+                    {
+                        continue;
+                    }
+
                     ReceiveOutcome outcome = await _receiver.ReceiveAsync(envelope, CancellationToken.None);
                     if (outcome == ReceiveOutcome.Defer)
                     {
-                        if (!_channel.Writer.TryWrite(envelope))
+                        if (!_channel.Writer.TryWrite(delivery))
                         {
                             LocalQueueLog.DeferredEnvelopeDropped(_logger, Name, envelope.Id.Value);
                         }
@@ -107,4 +129,33 @@ public sealed class LocalQueueAgent
             }
         }
     }
+
+    private bool TryOpen(Delivery delivery, [NotNullWhen(true)] out Envelope? envelope)
+    {
+        if (delivery.Envelope is { } byReference)
+        {
+            envelope = byReference;
+            return true;
+        }
+
+        if (delivery is { Message: { } message, Codec: { } codec })
+        {
+            try
+            {
+                envelope = codec.Decode(message);
+                return true;
+            }
+            catch (UnreadableTransportMessage exception)
+            {
+                _deadLetters.Enqueue(message);
+                LocalQueueLog.UnreadableMessageDeadLettered(_logger, exception, Name);
+                envelope = null;
+                return false;
+            }
+        }
+
+        throw new UnreachableException();
+    }
+
+    private readonly record struct Delivery(Envelope? Envelope, TransportMessage? Message, EnvelopeCodec? Codec);
 }
