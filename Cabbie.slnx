@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Cabbie.Aws/Cabbie.Aws.csproj" />
+    <Project Path="src/Cabbie.EntityFrameworkCore/Cabbie.EntityFrameworkCore.csproj" />
     <Project Path="src/Cabbie.Http/Cabbie.Http.csproj" />
     <Project Path="src/Cabbie.Postgresql/Cabbie.Postgresql.csproj" />
     <Project Path="src/Cabbie.RabbitMQ/Cabbie.RabbitMQ.csproj" />
