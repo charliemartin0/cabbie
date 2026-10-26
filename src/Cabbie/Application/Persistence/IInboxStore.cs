@@ -3,30 +3,31 @@ using Cabbie.Domain.Envelope.ValueObjects;
 namespace Cabbie.Application.Persistence;
 
 /// <summary>
-/// Inbox port. Acquires an incoming envelope for processing exactly once, then marks it
-/// processed or releases it for retry. Persistence owns the durable rows later; the
-/// in-memory store is the current default.
+/// Inbox port. Gives per-(envelope, handler) idempotency: a handler acquires an incoming
+/// envelope before it runs, then marks it processed or releases it for retry. Two handlers
+/// of one fan-out acquire independently; the same handler never runs twice for one envelope id
+/// once processed.
 /// </summary>
 public interface IInboxStore
 {
     /// <summary>
-    /// Try to acquire an envelope for processing. Returns false if the id was already
-    /// processed or is in-flight, giving duplicate-id idempotency.
+    /// Try to acquire an envelope for one handler. Returns false if that (id, handler) pair was
+    /// already processed or is in flight, so exactly one concurrent caller wins.
     /// </summary>
-    ValueTask<bool> TryAcquireAsync(EnvelopeId id, CancellationToken ct = default);
+    ValueTask<bool> TryAcquireAsync(EnvelopeId id, HandlerName handler, CancellationToken ct = default);
 
     /// <summary>
-    /// Mark an acquired envelope as successfully processed.
+    /// Mark an acquired (id, handler) pair as successfully processed.
     /// </summary>
-    ValueTask MarkProcessedAsync(EnvelopeId id, CancellationToken ct = default);
+    ValueTask MarkProcessedAsync(EnvelopeId id, HandlerName handler, CancellationToken ct = default);
 
     /// <summary>
-    /// Release an acquired envelope back to in-flight so a retry can acquire it again.
+    /// Release an acquired (id, handler) pair so a retry can acquire it again. A processed pair stays processed.
     /// </summary>
-    ValueTask ReleaseAsync(EnvelopeId id, CancellationToken ct = default);
+    ValueTask ReleaseAsync(EnvelopeId id, HandlerName handler, CancellationToken ct = default);
 
     /// <summary>
-    /// Load ids acquired but not yet marked processed, for recovery on host start.
+    /// Load pairs acquired but not yet marked processed, for recovery on host start.
     /// </summary>
-    ValueTask<IReadOnlyList<EnvelopeId>> LoadInFlightAsync(CancellationToken ct = default);
+    ValueTask<IReadOnlyList<InboxEntry>> LoadInFlightAsync(CancellationToken ct = default);
 }

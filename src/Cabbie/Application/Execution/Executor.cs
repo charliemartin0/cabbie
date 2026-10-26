@@ -97,11 +97,42 @@ public sealed class Executor
         return InvokeCore(envelope, handler, kind, cancellationToken);
     }
 
+    /// <summary>
+    /// Like <see cref="InvokeAsync"/>, but reports whether the handler's failure was handed to a
+    /// later attempt (a policy <c>Requeue</c> or <c>ScheduleRetry</c>). A handed-off attempt did not
+    /// complete, so the inbox must not mark it processed.
+    /// </summary>
+    internal async Task<(object? Result, bool HandedOff)> InvokeTrackingHandOffAsync(
+        Envelope envelope,
+        DiscoveredHandler handler,
+        CancellationToken cancellationToken,
+        Func<CancellationToken, ValueTask>? beforeRequeue = null)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+        ArgumentNullException.ThrowIfNull(handler);
+        InvocationKind kind = handler.Scheduled ? InvocationKind.Scheduled : InvocationKind.Invoke;
+        var handOff = new HandOffFlag { BeforeRequeue = beforeRequeue };
+        object? result = await InvokeCore(envelope, handler, kind, cancellationToken, handOff);
+        return (result, handOff.Value);
+    }
+
+    private sealed class HandOffFlag
+    {
+        internal bool Value { get; set; }
+
+        /// <summary>
+        /// Runs just before a requeued attempt (same envelope id) is sent, so the caller can free
+        /// per-envelope state the next attempt will need.
+        /// </summary>
+        internal Func<CancellationToken, ValueTask>? BeforeRequeue { get; init; }
+    }
+
     private async Task<object?> InvokeCore(
         Envelope envelope,
         DiscoveredHandler handler,
         InvocationKind kind,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        HandOffFlag? handOff = null)
     {
         try
         {
@@ -109,7 +140,7 @@ public sealed class Executor
                 MiddlewareLayer.Outer,
                 envelope,
                 handler,
-                () => InvokeWithRetries(envelope, handler, cancellationToken, kind),
+                () => InvokeWithRetries(envelope, handler, cancellationToken, kind, handOff),
                 cancellationToken);
         }
         catch (Exception exception) when (
@@ -128,7 +159,8 @@ public sealed class Executor
         Envelope envelope,
         DiscoveredHandler handler,
         CancellationToken cancellationToken,
-        InvocationKind kind)
+        InvocationKind kind,
+        HandOffFlag? handOff)
     {
         Envelope current = envelope;
         TimeSpan? timeout = handler.Timeout ?? _handlerTimeout;
@@ -183,7 +215,7 @@ public sealed class Executor
                     throw new HandlerFault(fault);
                 }
 
-                Envelope? next = await NextAttempt(current, handler, fault, cancellationToken, kind);
+                Envelope? next = await NextAttempt(current, handler, fault, cancellationToken, kind, handOff);
                 if (next is null)
                 {
                     return null;
@@ -210,7 +242,8 @@ public sealed class Executor
         DiscoveredHandler handler,
         Exception fault,
         CancellationToken cancellationToken,
-        InvocationKind kind)
+        InvocationKind kind,
+        HandOffFlag? handOff)
     {
         ErrorPolicyLookup lookup = _policies.For(
             fault.GetType(),
@@ -263,6 +296,7 @@ public sealed class Executor
                 }
 
                 ParkScheduledRetry(current, handler, retry);
+                MarkHandedOff(handOff);
                 Bus.FanOut.NoteDiverted();
                 return null;
             case Requeue requeue:
@@ -276,15 +310,29 @@ public sealed class Executor
                     await Task.Delay(requeue.Delay, _time, cancellationToken);
                 }
 
+                if (handOff?.BeforeRequeue is { } beforeRequeue)
+                {
+                    await beforeRequeue(CancellationToken.None);
+                }
+
                 await _sender().SendAsync(
                     WithNextAttempt(current) with { Handler = new HandlerName(handler.Name) },
                     cancellationToken);
+                MarkHandedOff(handOff);
                 Bus.FanOut.NoteDiverted();
                 return null;
             case Discard:
                 return null;
             default:
                 throw new HandlerFault(fault);
+        }
+    }
+
+    private static void MarkHandedOff(HandOffFlag? handOff)
+    {
+        if (handOff is not null)
+        {
+            handOff.Value = true;
         }
     }
 

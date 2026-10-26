@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Cabbie.Application.Cascades;
 using Cabbie.Application.Discovery;
 using Cabbie.Application.Execution;
@@ -32,6 +33,8 @@ public sealed class MessageDelivery
     private readonly ISender? _sender;
     private readonly Func<object, Envelope, CancellationToken, ValueTask>? _onImmediate;
     private readonly ICascadePublisher? _cascades;
+    private readonly IInboxStore? _inbox;
+    private readonly ConcurrentDictionary<InboxEntry, IReadOnlyList<object>> _undeliveredCascades = new();
 
     public MessageDelivery(
         HandlerCatalog catalog,
@@ -40,7 +43,8 @@ public sealed class MessageDelivery
         RoutingCatalog? routing = null,
         ISender? sender = null,
         Func<object, Envelope, CancellationToken, ValueTask>? onImmediate = null,
-        ICascadePublisher? cascades = null)
+        ICascadePublisher? cascades = null,
+        IInboxStore? inbox = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(executor);
@@ -51,6 +55,7 @@ public sealed class MessageDelivery
         _sender = sender;
         _onImmediate = onImmediate;
         _cascades = cascades;
+        _inbox = inbox;
     }
 
     /// <summary>
@@ -81,7 +86,7 @@ public sealed class MessageDelivery
             targets,
             envelope,
             _executor,
-            handler => InvokeAndDispatch(envelope, handler, scheduled, cancellationToken),
+            handler => InvokeAndDispatch(envelope, handler, scheduled, useInbox: true, cancellationToken),
             cancellationToken);
     }
 
@@ -98,12 +103,37 @@ public sealed class MessageDelivery
         Envelope envelope,
         DiscoveredHandler handler,
         bool scheduled = false,
+        bool useInbox = false,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(envelope);
         ArgumentNullException.ThrowIfNull(handler);
         DiscoveredHandler target = scheduled ? handler with { Scheduled = true } : handler;
 
+        if (!useInbox || _inbox is null)
+        {
+            await RunHandler(envelope, target, inboxKey: null, cancellationToken);
+            return;
+        }
+
+        var key = new InboxEntry(envelope.Id, new HandlerName(handler.Name));
+        if (!await _inbox.TryAcquireAsync(key.Id, key.Handler, cancellationToken))
+        {
+            // Already processed (or in flight elsewhere): never re-run the handler. If its cascades
+            // failed to send last time, retry only those.
+            await RetryUndeliveredCascades(key, envelope, cancellationToken);
+            return;
+        }
+
+        await RunHandler(envelope, target, key, cancellationToken);
+    }
+
+    private async Task RunHandler(
+        Envelope envelope,
+        DiscoveredHandler target,
+        InboxEntry? inboxKey,
+        CancellationToken cancellationToken)
+    {
         // Take the outbox transaction the middleware registered for this envelope id,
         // after the handler attempt: an AsyncLocal set inside the middleware does not
         // flow back here, so the registration is the hand-off. Re-establish it as the
@@ -112,18 +142,53 @@ public sealed class MessageDelivery
         // a nested handler or retry may have set/cleared the ambient since.
         IOutboxTransaction? tx = null;
         bool failed = true;
+        bool handedOff = false;
+        bool released = false;
+        bool markedProcessed = false;
+
+        // A requeued attempt keeps this envelope id, so its inbox row must be free before the
+        // send: a fast consumer would otherwise fail TryAcquire and ack the attempt away.
+        async ValueTask ReleaseBeforeRequeue(CancellationToken ct)
+        {
+            released = true;
+            await _inbox!.ReleaseAsync(inboxKey!.Id, inboxKey.Handler, ct);
+        }
+
         try
         {
-            object? result = await _executor.InvokeAsync(envelope, target, cancellationToken);
+            object? result;
+            if (inboxKey is null)
+            {
+                result = await _executor.InvokeAsync(envelope, target, cancellationToken);
+            }
+            else
+            {
+                (result, handedOff) = await _executor.InvokeTrackingHandOffAsync(
+                    envelope, target, cancellationToken, ReleaseBeforeRequeue);
+            }
+
             tx = OutboxTransactionScope.Take(envelope.Id);
             if (tx is not null)
             {
                 OutboxTransactionScope.Begin(tx);
             }
 
+            if (inboxKey is not null && !handedOff && tx is null)
+            {
+                // No outbox transaction: record the finished handler before the cascades go out,
+                // so a cascade send failure never re-runs it.
+                await _inbox!.MarkProcessedAsync(inboxKey.Id, inboxKey.Handler, cancellationToken);
+                markedProcessed = true;
+            }
+
             IReadOnlyList<object> outgoing = CascadingMessages.From(result);
             if (outgoing.Count > 0)
             {
+                if (markedProcessed)
+                {
+                    _undeliveredCascades[inboxKey!] = outgoing;
+                }
+
                 await DispatchOutgoing(outgoing, envelope, cancellationToken);
             }
 
@@ -131,10 +196,52 @@ public sealed class MessageDelivery
         }
         finally
         {
-            if (tx is not null)
+            try
             {
-                await OutboxTransactionScope.Complete(tx, success: !failed, cancellationToken);
+                if (tx is not null)
+                {
+                    await OutboxTransactionScope.Complete(tx, success: !failed, cancellationToken);
+                    if (!failed && inboxKey is not null && !handedOff)
+                    {
+                        // Only a committed outbox transaction counts as processed: a failed commit
+                        // rolls the handler's work back, so redelivery must run it again.
+                        await _inbox!.MarkProcessedAsync(inboxKey.Id, inboxKey.Handler, CancellationToken.None);
+                        markedProcessed = true;
+                    }
+                }
+
+                if (!failed && markedProcessed)
+                {
+                    // Sent (or staged and committed): nothing left to retry.
+                    _undeliveredCascades.TryRemove(inboxKey!, out _);
+                }
             }
+            finally
+            {
+                if (inboxKey is not null && !markedProcessed && !released)
+                {
+                    // Faulted, cancelled or handed to a scheduled retry: let that attempt acquire again.
+                    await _inbox!.ReleaseAsync(inboxKey.Id, inboxKey.Handler, CancellationToken.None);
+                }
+            }
+        }
+    }
+
+    private async Task RetryUndeliveredCascades(InboxEntry key, Envelope envelope, CancellationToken cancellationToken)
+    {
+        if (!_undeliveredCascades.TryRemove(key, out IReadOnlyList<object>? outgoing))
+        {
+            return;
+        }
+
+        try
+        {
+            await DispatchOutgoing(outgoing, envelope, cancellationToken);
+        }
+        catch
+        {
+            _undeliveredCascades[key] = outgoing;
+            throw;
         }
     }
 
