@@ -1,5 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Cabbie.Aws</PackageId>
+    <Description>Amazon SQS and SNS transports for Cabbie.</Description>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Cabbie\Cabbie.csproj" />
   </ItemGroup>

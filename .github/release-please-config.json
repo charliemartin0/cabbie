@@ -1,0 +1,11 @@
+{
+  "bootstrap-sha": "8866715a41b60d350fa247bc18287d5d580e0b03",
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "cabbie",
+      "initial-version": "0.1.0",
+      "extra-files": ["Directory.Build.props"]
+    }
+  }
+}
